@@ -1,0 +1,48 @@
+# Render Blueprint — backend API (FastAPI + OCR) and its Postgres database.
+# Create everything from this file: Render Dashboard → New → Blueprint → pick this repo.
+#
+# Notes:
+# - The web service uses the Starter plan because a persistent disk (for uploaded
+#   files and generated PDF reports) requires a paid instance. To stay on the free
+#   tier instead, remove the `disk:` block and use S3/R2 (see docs/DEPLOYMENT.md).
+# - ANTHROPIC_API_KEY is marked secret (sync:false) — set it in the Render dashboard.
+
+services:
+  - type: web
+    name: vat-ameen-api
+    runtime: docker
+    rootDir: apps/api
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: vat-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: STORAGE_BACKEND
+        value: local
+      - key: LOCAL_STORAGE_DIR
+        value: /var/data/storage
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vat-ameen-db
+          property: connectionString
+      - key: API_CORS_ORIGINS
+        value: https://vat-ameen.vercel.app
+      - key: AI_PROVIDER
+        value: anthropic
+      - key: AI_MODEL
+        value: claude-sonnet-5
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+
+databases:
+  - name: vat-ameen-db
+    plan: free

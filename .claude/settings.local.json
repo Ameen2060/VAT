@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(docker --version)",
+      "Bash(git --version)",
+      "WebSearch",
+      "Bash(./.venv/Scripts/python.exe -c \"import app.main; from app.vat.schemas import Finding, ReviewResult, Severity, Party, ComplianceStatus, RiskLevel, ValidationCheck, VerificationItem; from app.compliance.domain import Regime, ReviewResultBase; from app.models import Document, Review; print\\('imports OK'\\); print\\('Document.regime col:', 'regime' in Document.__table__.columns\\); print\\('Review.regime col:', 'regime' in Review.__table__.columns\\); print\\('ReviewResult subclass:', issubclass\\(ReviewResult, ReviewResultBase\\)\\); r=ReviewResult\\(compliance_status='pass', risk_level='low', invoice_type='invoice', transaction_type='local'\\); print\\('failed prop:', r.failed\\); print\\('fields:', list\\(r.model_dump\\(\\).keys\\(\\)\\)\\)\")",
+      "Bash(./.venv/Scripts/python.exe -m pytest -q)",
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/test_ct_rules.py -q)",
+      "Bash(./.venv/Scripts/python.exe -c ' *)",
+      "WebFetch(domain:taxsummaries.pwc.com)",
+      "WebFetch(domain:tax.gov.ae)",
+      "WebFetch(domain:www.pwc.com)",
+      "WebFetch(domain:mof.gov.ae)",
+      "Bash(pip show *)",
+      "WebFetch(domain:www.xb4.ae)",
+      "Read(//c/Users/AmeenAboSallow/.claude/projects/C--Users-AmeenAboSallow-Downloads-VAT/59d2f7e7-fd13-4838-9454-0509c1e0c9ad/tool-results/**)",
+      "Bash(pdftotext -layout webfetch-1786019770371-uulsfm.pdf ct-returns.txt)",
+      "WebFetch(domain:growacross.com)",
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/test_ct_rules.py tests/test_ct_api.py -q)",
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/test_accounting.py -q)",
+      "Bash(./.venv/Scripts/python.exe -m ruff check app/accounting app/api/routes_accounting.py app/main.py tests/test_accounting.py)",
+      "Bash(./.venv/Scripts/python.exe -m ruff check --fix app/accounting app/api/routes_accounting.py tests/test_accounting.py)",
+      "Bash(./.venv/Scripts/python.exe -m ruff check app/accounting app/api/routes_accounting.py tests/test_accounting.py)",
+      "Bash(./.venv/Scripts/python.exe -m ruff check app/api/routes_ct.py)",
+      "Bash(./.venv/Scripts/python.exe -m pytest tests/test_financial_statements.py tests/test_sales.py -q)",
+      "Bash(./.venv/Scripts/python.exe -m ruff check app/accounting app/sales app/api/routes_accounting.py app/api/routes_sales.py tests/test_sales.py tests/test_financial_statements.py)",
+      "Bash(grep -vE 'B008|Depends|Query|^\\\\s|^-|^\\\\||^help|^$|^Found')",
+      "Bash(./.venv/Scripts/python.exe -m ruff check --fix app/api/routes_accounting.py)"
+    ]
+  }
+}

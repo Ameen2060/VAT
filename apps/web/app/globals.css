@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: 247 248 250;
+  --surface: 255 255 255;
+  --elevated: 255 255 255;
+  --border: 226 230 236;
+  --fg: 17 24 39;
+  --muted: 107 114 128;
+  --brand: 15 91 158;      /* deep FTA-style blue */
+  --brand-fg: 255 255 255;
+  --success: 21 128 61;
+  --warning: 180 83 9;
+  --danger: 185 28 28;
+}
+
+.dark {
+  --bg: 10 14 20;
+  --surface: 17 23 32;
+  --elevated: 24 32 43;
+  --border: 38 47 60;
+  --fg: 229 231 235;
+  --muted: 148 163 184;
+  --brand: 56 148 220;
+  --brand-fg: 8 12 18;
+  --success: 34 197 94;
+  --warning: 234 160 60;
+  --danger: 248 113 113;
+}
+
+* {
+  border-color: rgb(var(--border));
+}
+
+body {
+  color: rgb(var(--fg));
+  background: rgb(var(--bg));
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Thin scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgb(var(--border)); border-radius: 6px; }
+
+@layer utilities {
+  .animate-in { animation: fade-in 0.25s ease-out; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

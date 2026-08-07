@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+
+# Databases / local storage
+*.sqlite3
+*.db
+/data/
+/storage/
+local_uploads/
+
+# Sample / test documents — may contain real client data; keep out of the repo
+/samples/
+apps/api/samples/
+
+# Local object storage (uploaded invoices + generated report PDFs) — runtime data
+apps/api/storage/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
