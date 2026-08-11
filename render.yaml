@@ -42,6 +42,11 @@ services:
         sync: false
       - key: SECRET_KEY
         generateValue: true
+      # First-admin bootstrap — set real values in the Render dashboard (not the default).
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
 
   # Scheduled FTA regulatory-update monitor — checks official sources daily and records
   # content changes as NEW signals for review (requirement: continuous monitoring).
