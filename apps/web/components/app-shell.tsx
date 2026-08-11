@@ -11,11 +11,12 @@ import { useTheme } from "./theme-provider";
 const NAV = [
   { href: "/", label: "Dashboard", icon: "grid" },
   { href: "/analyze", label: "Document Analysis", icon: "scan" },
-  { href: "/review", label: "Invoice Review", icon: "doc" },
   { href: "/assistant", label: "VAT Assistant", icon: "chat" },
   { href: "/vat-return", label: "VAT Return", icon: "receipt" },
+  { href: "/fta-updates", label: "FTA Updates", icon: "bell" },
   { href: "/knowledge", label: "Knowledge Base", icon: "book" },
   { href: "/repository", label: "Repository", icon: "folder" },
+  { href: "/archive", label: "Archive", icon: "archive" },
 ];
 
 function Icon({ name }: { name: string }) {
@@ -29,6 +30,9 @@ function Icon({ name }: { name: string }) {
     receipt: "M5 3v18l2-1 2 1 2-1 2 1 2-1 2 1V3l-2 1-2-1-2 1-2-1-2 1zM8 8h8M8 12h8",
     sun: "M12 4V2m0 20v-2m8-8h2M2 12h2m13.66 5.66l1.41 1.41M4.93 4.93l1.41 1.41m0 12.72l-1.41 1.41M19.07 4.93l-1.41 1.41M12 8a4 4 0 100 8 4 4 0 000-8z",
     moon: "M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z",
+    gear: "M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 13a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z",
+    archive: "M3 4h18v4H3zM5 8v12h14V8M9 12h6",
+    bell: "M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0",
   };
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -139,10 +143,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </button>
             {user && (
               <div className="flex items-center gap-2 border-l border-border pl-3">
-                <div className="hidden text-right sm:block">
+                <Link href="/settings" className="hidden text-right sm:block hover:opacity-80" title="Account settings">
                   <div className="text-xs font-medium">{user.email}</div>
                   <div className="text-[10px] uppercase text-muted">{user.role}</div>
-                </div>
+                </Link>
+                <Link
+                  href="/settings"
+                  aria-label="Account settings"
+                  title="Account settings"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg border border-border text-muted hover:text-fg"
+                >
+                  <Icon name="gear" />
+                </Link>
                 <button
                   onClick={logout}
                   className="rounded-lg border border-border px-2.5 py-1.5 text-xs font-medium text-muted hover:text-fg"

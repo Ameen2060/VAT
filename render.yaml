@@ -43,6 +43,28 @@ services:
       - key: SECRET_KEY
         generateValue: true
 
+  # Scheduled FTA regulatory-update monitor — checks official sources daily and records
+  # content changes as NEW signals for review (requirement: continuous monitoring).
+  - type: cron
+    name: vat-ameen-fta-monitor
+    runtime: docker
+    rootDir: apps/api
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    schedule: "0 6 * * *"          # daily at 06:00 UTC
+    dockerCommand: python -m app.tasks.monitor_cron
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: STORAGE_BACKEND
+        value: local
+      - key: LOCAL_STORAGE_DIR
+        value: /var/data/storage
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vat-ameen-db
+          property: connectionString
+
 databases:
   - name: vat-ameen-db
     plan: free

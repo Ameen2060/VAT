@@ -127,6 +127,11 @@ class Invoice(BaseModel):
     # Per-field extraction confidence (0..1), keyed by field path e.g. "invoice_number".
     field_confidence: dict[str, float] = Field(default_factory=dict)
 
+    # Level-4 source evidence: for each extracted field, where in the document text the
+    # value was found — {field_path: {"snippet": str, "line_no": int, "start": int, "end": int}}.
+    # Lets the UI trace every value back to its exact location in the original document.
+    field_evidence: dict[str, dict] = Field(default_factory=dict)
+
     # Free-form notes captured during extraction
     notes: str | None = None
 

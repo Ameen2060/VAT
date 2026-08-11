@@ -11,8 +11,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..auth.deps import get_current_user
 from ..core.database import get_db
-from ..models import Vat201ReturnRecord, Vat201TxnRecord
+from ..models import User, Vat201ReturnRecord, Vat201TxnRecord
+from ..services import archive as archive_svc
 from ..vat201.refund import prepare_refund311
 from ..vat201.service import generate_return
 
@@ -51,6 +53,7 @@ async def generate(
     filter_by_date: bool = Form(True),
     default_emirate: str | None = Form(None),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> dict:
     if period_type not in ("month", "quarter"):
         raise HTTPException(status_code=400, detail="period_type must be 'month' or 'quarter'")
@@ -64,6 +67,12 @@ async def generate(
         company_name=company_name, company_trn=company_trn,
         period_type=period_type, year=year, index=index,
         filter_by_date=filter_by_date, default_emirate=default_emirate,
+    )
+    # Archive the source transactions file, linked to the generated return.
+    archive_svc.archive_file(
+        db, filename=file.filename or "transactions.csv", data=data,
+        mime=file.content_type, source=archive_svc.SOURCE_VAT_RETURN,
+        vat201_return_id=rec.id, uploaded_by=getattr(user, "email", None),
     )
     return {"id": rec.id, "return": rec.return_json}
 

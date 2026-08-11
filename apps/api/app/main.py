@@ -14,9 +14,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
 from .api.routes_ai import router as ai_router
+from .api.routes_archive import router as archive_router
 from .api.routes_assistant import router as assistant_router
 from .api.routes_auth import router as auth_router
 from .api.routes_ct import router as ct_router
+from .api.routes_fta import router as fta_router
 from .api.routes_knowledge import router as knowledge_router
 from .api.routes_review import router as review_router
 from .api.routes_vat201 import router as vat201_router
@@ -51,6 +53,10 @@ async def lifespan(_: FastAPI):
     ensure_columns("documents", {"regime": "VARCHAR(8) DEFAULT 'vat'"})
     # VAT311 refund application stored on a VAT201 return.
     ensure_columns("vat201_returns", {"refund311_json": "TEXT"})
+    # Soft-delete columns on the archive (existing rows default to not-deleted).
+    ensure_columns("archive_files", {"deleted_at": "TIMESTAMP", "deleted_by": "VARCHAR(255)"})
+    # SME-validation gate on effective-dated rules.
+    ensure_columns("vat_rule_versions", {"requires_validation": "BOOLEAN DEFAULT 0"})
     # Seed the first admin from configured credentials (no-op if users already exist).
     from .auth.service import bootstrap_admin
     from .core.database import SessionLocal
@@ -90,6 +96,8 @@ app.include_router(knowledge_router, dependencies=_auth)
 app.include_router(ai_router, dependencies=_auth)
 app.include_router(vat201_router, dependencies=_auth)
 app.include_router(ct_router, dependencies=_auth)
+app.include_router(archive_router, dependencies=_auth)
+app.include_router(fta_router, dependencies=_auth)
 
 
 @app.get("/health", tags=["system"])

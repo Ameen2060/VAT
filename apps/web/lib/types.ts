@@ -205,6 +205,10 @@ export interface ExtractedInvoice {
   line_items?: ExtractedLineItem[];
   payment?: PaymentInfo | null;
   field_confidence?: Record<string, number>;
+  field_evidence?: Record<
+    string,
+    { snippet: string; line_no: number; start: number; end: number; page?: number; bbox?: number[] }
+  >;
   notes?: string | null;
   [key: string]: unknown;
 }
@@ -245,11 +249,25 @@ export interface DashboardSummary {
   approved: number;
 }
 
+export interface FtaSourceRef {
+  tier: string;
+  title: string;
+  source_ref: string | null;
+  effective_from: string | null;
+}
+
 export interface ChatResponse {
   reply: string;
   provider: string;
   citations: string[];
   grounded: boolean;
+  vat_issue?: string | null;
+  applicable_treatment?: string | null;
+  effective_date?: string | null;
+  validation_status?: string; // grounded | provisional | requires_sme
+  provisional?: boolean;
+  fta_sources?: FtaSourceRef[];
+  audit_id?: string | null;
 }
 
 export interface KnowledgeDoc {
@@ -266,3 +284,112 @@ export interface SearchHit {
   title: string;
   score: number;
 }
+
+// ── Archive ──────────────────────────────────────────────────────────────────
+export interface ArchiveRelated {
+  kind: string | null;          // "review" | "vat_return" | null
+  id: string | null;
+  label: string | null;
+  analysis_href: string | null; // frontend route to the analysis/details
+  report_url: string | null;    // API path to download the related report/analysis
+}
+
+export interface ArchiveEntry {
+  id: string;
+  filename: string;
+  mime: string | null;
+  size_bytes: number;
+  source: string;
+  source_label: string;
+  uploaded_by: string | null;
+  created_at: string | null;
+  file_url: string;
+  related: ArchiveRelated;
+  deleted_at: string | null;
+  deleted_by: string | null;
+  purge_in_days: number | null;
+}
+
+// ── FTA VAT Regulatory Updates ───────────────────────────────────────────────
+export interface FtaValidationCheck {
+  category: string;
+  passed: boolean;
+  detail: string;
+}
+export interface FtaValidation {
+  passed: number;
+  total: number;
+  ok: boolean;
+  checks: FtaValidationCheck[];
+}
+export interface FtaUpdate {
+  id: string;
+  title: string;
+  update_type: string;
+  classification: string; // informational | guidance | legally_effective
+  status: string; // new | under_review | approved | implemented | rejected
+  critical: boolean;
+  publication_date: string | null;
+  effective_date: string | null;
+  previous_rule: string | null;
+  new_rule: string | null;
+  affected_module: string | null;
+  affected_treatment: string | null;
+  source_ref: string | null;
+  notes: string | null;
+  approved_by: string | null;
+  implemented_at: string | null;
+  validation: FtaValidation | null;
+  created_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+export interface FtaSource {
+  id: string;
+  name: string;
+  url: string;
+  authority: string;
+  category: string;
+  is_active: boolean;
+  last_status: string; // unchecked | unchanged | changed | error
+  last_checked_at: string | null;
+  note: string | null;
+}
+export interface FtaRule {
+  id: string;
+  rule_key: string;
+  title: string;
+  category: string;
+  value: string | null;
+  effective_from: string;
+  effective_to: string | null;
+  source_ref: string;
+  status: string;
+}
+export interface FtaDashboard {
+  new: number;
+  under_review: number;
+  approved: number;
+  implemented: number;
+  rejected: number;
+  critical: number;
+  total: number;
+  affected_modules: string[];
+  upcoming_effective: {
+    id: string;
+    title: string;
+    effective_date: string | null;
+    status: string;
+    affected_module: string | null;
+    critical: boolean;
+  }[];
+  critical_pending: {
+    id: string;
+    title: string;
+    status: string;
+    effective_date: string | null;
+    affected_module: string | null;
+  }[];
+  sources: Record<string, number>;
+}
+export type FtaUpdateInput = Partial<Omit<FtaUpdate, "id" | "status" | "validation" | "approved_by" | "implemented_at" | "created_by" | "created_at" | "updated_at">> & { title: string };

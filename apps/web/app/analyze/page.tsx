@@ -57,23 +57,86 @@ function Dropzone({ onFile, busy }: { onFile: (f: File) => void; busy: boolean }
   );
 }
 
-// Editable text field with confidence indicator.
+type Evidence = {
+  snippet: string;
+  line_no: number;
+  start: number;
+  end: number;
+  page?: number;
+  bbox?: number[];
+};
+
+// The document being analysed — set during render so SourceEvidence can build page-image
+// URLs without threading the id through every Field.
+let evidenceDocId: string | undefined;
+
+// Level-4 source evidence: shows the exact document line a value was extracted from (text
+// highlighted), and — when OCR/layout coordinates are available — the region on the page
+// image, boxed.
+function SourceEvidence({ ev }: { ev: Evidence }) {
+  const documentId = evidenceDocId;
+  const before = ev.snippet.slice(0, ev.start);
+  const hit = ev.snippet.slice(ev.start, ev.end);
+  const after = ev.snippet.slice(ev.end);
+  const hasBox = documentId && ev.page != null && ev.bbox && ev.bbox.length === 4;
+  const [x0, y0, x1, y1] = ev.bbox ?? [0, 0, 0, 0];
+  const pad = 0.01; // small margin around the box
+  return (
+    <details className="ml-auto text-[10px]">
+      <summary className="cursor-pointer select-none text-brand" title="Trace this value to the source document">
+        ⌖ source
+      </summary>
+      <div className="mt-1 rounded-md border border-border bg-elevated px-2 py-1.5 font-mono text-[11px] leading-snug text-muted">
+        <div className="mb-0.5 text-[9px] uppercase tracking-wide">
+          line {ev.line_no + 1}
+          {hasBox && <span> · page {(ev.page as number) + 1}</span>}
+        </div>
+        <span>{before}</span>
+        <mark className="rounded bg-brand/25 px-0.5 text-fg">{hit || ev.snippet}</mark>
+        <span>{after}</span>
+        {hasBox && (
+          <div className="relative mt-2 overflow-hidden rounded border border-border">
+            <img
+              src={api.pageUrl(documentId, ev.page as number)}
+              alt="Source page"
+              className="block w-full"
+            />
+            <div
+              className="pointer-events-none absolute border-2 border-brand bg-brand/20"
+              style={{
+                left: `${Math.max(0, x0 - pad) * 100}%`,
+                top: `${Math.max(0, y0 - pad) * 100}%`,
+                width: `${Math.min(1, x1 - x0 + pad * 2) * 100}%`,
+                height: `${Math.min(1, y1 - y0 + pad * 2) * 100}%`,
+              }}
+            />
+          </div>
+        )}
+      </div>
+    </details>
+  );
+}
+
+// Editable text field with confidence indicator and (optional) source evidence.
 function Field({
   label,
   value,
   onChange,
   score,
+  evidence,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   score?: number;
+  evidence?: Evidence;
 }) {
   return (
     <label className="block">
       <span className="flex items-center text-xs uppercase tracking-wide text-muted">
         {label}
         <ConfDot score={score} />
+        {evidence && <SourceEvidence ev={evidence} />}
       </span>
       <input
         value={value}
@@ -127,6 +190,7 @@ export default function AnalyzePage() {
   };
 
   const conf = (key: string) => detail?.invoice?.field_confidence?.[key];
+  const ev = (key: string) => detail?.invoice?.field_evidence?.[key];
 
   const setField = (path: string, val: string) => {
     setForm((prev) => {
@@ -187,6 +251,7 @@ export default function AnalyzePage() {
     }
   };
 
+  evidenceDocId = detail?.document_id;
   const inv = form ?? {};
   const sup = inv.supplier ?? {};
   const rec = inv.recipient ?? {};
@@ -331,30 +396,30 @@ export default function AnalyzePage() {
               ) : (
                 <div className="h-[560px] space-y-4 overflow-auto p-4">
                   <div className="grid grid-cols-2 gap-3">
-                    <Field label="Invoice #" value={inv.invoice_number ?? ""} onChange={(v) => setField("invoice_number", v)} score={conf("invoice_number")} />
-                    <Field label="Date" value={inv.invoice_date ?? ""} onChange={(v) => setField("invoice_date", v)} score={conf("invoice_date")} />
-                    <Field label="Due date" value={inv.due_date ?? ""} onChange={(v) => setField("due_date", v)} score={conf("due_date")} />
+                    <Field label="Invoice #" value={inv.invoice_number ?? ""} onChange={(v) => setField("invoice_number", v)} score={conf("invoice_number")} evidence={ev("invoice_number")} />
+                    <Field label="Date" value={inv.invoice_date ?? ""} onChange={(v) => setField("invoice_date", v)} score={conf("invoice_date")} evidence={ev("invoice_date")} />
+                    <Field label="Due date" value={inv.due_date ?? ""} onChange={(v) => setField("due_date", v)} score={conf("due_date")} evidence={ev("due_date")} />
                     <Field label="Currency" value={inv.currency ?? ""} onChange={(v) => setField("currency", v)} score={conf("currency")} />
                   </div>
 
                   <div className="text-xs font-semibold uppercase text-muted">Supplier</div>
                   <div className="grid grid-cols-2 gap-3">
-                    <Field label="Name" value={sup.name ?? ""} onChange={(v) => setField("supplier.name", v)} score={conf("supplier.name")} />
-                    <Field label="TRN" value={sup.trn ?? ""} onChange={(v) => setField("supplier.trn", v)} score={conf("supplier.trn")} />
+                    <Field label="Name" value={sup.name ?? ""} onChange={(v) => setField("supplier.name", v)} score={conf("supplier.name")} evidence={ev("supplier.name")} />
+                    <Field label="TRN" value={sup.trn ?? ""} onChange={(v) => setField("supplier.trn", v)} score={conf("supplier.trn")} evidence={ev("supplier.trn")} />
                   </div>
 
                   <div className="text-xs font-semibold uppercase text-muted">Customer</div>
                   <div className="grid grid-cols-2 gap-3">
-                    <Field label="Name" value={rec.name ?? ""} onChange={(v) => setField("recipient.name", v)} score={conf("recipient.name")} />
-                    <Field label="TRN" value={rec.trn ?? ""} onChange={(v) => setField("recipient.trn", v)} score={conf("recipient.trn")} />
+                    <Field label="Name" value={rec.name ?? ""} onChange={(v) => setField("recipient.name", v)} score={conf("recipient.name")} evidence={ev("recipient.name")} />
+                    <Field label="TRN" value={rec.trn ?? ""} onChange={(v) => setField("recipient.trn", v)} score={conf("recipient.trn")} evidence={ev("recipient.trn")} />
                   </div>
-                  <Field label="Customer address" value={rec.address ?? ""} onChange={(v) => setField("recipient.address", v)} score={conf("recipient.address")} />
+                  <Field label="Customer address" value={rec.address ?? ""} onChange={(v) => setField("recipient.address", v)} score={conf("recipient.address")} evidence={ev("recipient.address")} />
 
                   <div className="text-xs font-semibold uppercase text-muted">Totals</div>
                   <div className="grid grid-cols-3 gap-3">
-                    <Field label="Net" value={inv.total_net ?? ""} onChange={(v) => setField("total_net", v)} score={conf("total_net")} />
-                    <Field label="VAT" value={inv.total_vat ?? ""} onChange={(v) => setField("total_vat", v)} score={conf("total_vat")} />
-                    <Field label="Gross" value={inv.total_gross ?? ""} onChange={(v) => setField("total_gross", v)} score={conf("total_gross")} />
+                    <Field label="Net" value={inv.total_net ?? ""} onChange={(v) => setField("total_net", v)} score={conf("total_net")} evidence={ev("total_net")} />
+                    <Field label="VAT" value={inv.total_vat ?? ""} onChange={(v) => setField("total_vat", v)} score={conf("total_vat")} evidence={ev("total_vat")} />
+                    <Field label="Gross" value={inv.total_gross ?? ""} onChange={(v) => setField("total_gross", v)} score={conf("total_gross")} evidence={ev("total_gross")} />
                   </div>
 
                   {inv.line_items && inv.line_items.length > 0 && (

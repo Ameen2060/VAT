@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import type { DashboardSummary, ReviewStatus, ReviewSummary, RiskLevel } from "@/lib/types";
 import { Card, StatusBadge } from "@/components/ui";
 import { ActionMenu } from "@/components/action-menu";
+import { FtaSummary } from "@/components/fta-summary";
 
 function Kpi({ label, value, tone = "" }: { label: string; value: number; tone?: string }) {
   return (
@@ -224,6 +225,9 @@ export default function DashboardPage() {
               </div>
             </Card>
           </div>
+
+          {/* FTA VAT regulatory updates summary */}
+          <FtaSummary />
 
           {/* Risk-grouped issue lists with per-issue actions */}
           {SECTIONS.map((section) => {

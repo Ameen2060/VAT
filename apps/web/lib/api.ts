@@ -3,9 +3,15 @@
 import { clearSession, getToken, setSession, type AuthUser } from "./auth";
 import type {
   AiStatus,
+  ArchiveEntry,
   ChatResponse,
   DashboardSummary,
   ExtractedInvoice,
+  FtaDashboard,
+  FtaRule,
+  FtaSource,
+  FtaUpdate,
+  FtaUpdateInput,
   KnowledgeDoc,
   ReviewDetail,
   ReviewStatus,
@@ -13,8 +19,9 @@ import type {
   SearchHit,
 } from "./types";
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+// Default to same-origin relative URLs ("") — Next proxies /api to the backend
+// (see next.config.mjs rewrites → BACKEND_ORIGIN). A non-empty value overrides it.
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 function authHeaders(): Record<string, string> {
   const token = getToken();
@@ -67,6 +74,24 @@ export const api = {
 
   async me(): Promise<AuthUser> {
     return json(await afetch(`${API_BASE}/api/auth/me`, { cache: "no-store" }));
+  },
+
+  // Change the signed-in user's own login details. Requires the current password.
+  async updateAccount(body: {
+    current_password: string;
+    new_email?: string;
+    new_password?: string;
+    full_name?: string;
+  }): Promise<AuthUser> {
+    const data = await json<{ access_token: string; user: AuthUser }>(
+      await afetch(`${API_BASE}/api/auth/account`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+    setSession(data.access_token, data.user); // refresh token + stored identity
+    return data.user;
   },
 
   // ── Reviews / documents ────────────────────────────────────────────────────
@@ -139,6 +164,11 @@ export const api = {
     return withToken(`${API_BASE}/api/documents/${documentId}/file`);
   },
 
+  // Rendered PNG of one page, for source-evidence bbox overlays.
+  pageUrl(documentId: string, page: number) {
+    return withToken(`${API_BASE}/api/documents/${documentId}/page/${page}`);
+  },
+
   async updateInvoice(reviewId: string, invoice: Partial<ExtractedInvoice>) {
     return json(
       await afetch(`${API_BASE}/api/reviews/${reviewId}/invoice`, {
@@ -149,14 +179,37 @@ export const api = {
     );
   },
 
-  async chat(messages: { role: string; content: string }[]): Promise<ChatResponse> {
+  async chat(
+    messages: { role: string; content: string }[],
+    doc?: { name: string; text: string } | null,
+    asOfDate?: string | null,
+  ): Promise<ChatResponse> {
     return json(
       await afetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages }),
+        body: JSON.stringify({
+          messages,
+          document_name: doc?.name ?? null,
+          document_text: doc?.text ?? null,
+          as_of_date: asOfDate || null,
+        }),
       }),
     );
+  },
+
+  // Attach a document to the assistant (PDF / Word / image) → extracted text.
+  async uploadAssistantDoc(file: File): Promise<{
+    filename: string;
+    text: string;
+    chars: number;
+    ocr_used: boolean;
+    truncated: boolean;
+    warnings: string[];
+  }> {
+    const fd = new FormData();
+    fd.append("file", file);
+    return json(await afetch(`${API_BASE}/api/assistant/upload`, { method: "POST", body: fd }));
   },
 
   async seedKnowledge(): Promise<{ added: number; total_documents: number }> {
@@ -177,6 +230,95 @@ export const api = {
 
   async aiStatus(): Promise<AiStatus> {
     return json(await afetch(`${API_BASE}/api/ai/status`, { cache: "no-store" }));
+  },
+
+  // ── Archive ────────────────────────────────────────────────────────────────
+  async listArchive(params: { q?: string; source?: string; deleted?: boolean } = {}): Promise<ArchiveEntry[]> {
+    const p = new URLSearchParams();
+    if (params.q) p.set("q", params.q);
+    if (params.source) p.set("source", params.source);
+    if (params.deleted) p.set("deleted", "true");
+    const qs = p.toString() ? `?${p}` : "";
+    return json(await afetch(`${API_BASE}/api/archive${qs}`, { cache: "no-store" }));
+  },
+
+  archiveFileUrl(id: string, download = false) {
+    return withToken(`${API_BASE}/api/archive/${id}/file?download=${download ? 1 : 0}`);
+  },
+
+  // Soft delete by default; pass permanent to hard-delete immediately (admin only).
+  async deleteArchive(id: string, permanent = false): Promise<{ deleted: string }> {
+    const qs = permanent ? "?permanent=true" : "";
+    return json(await afetch(`${API_BASE}/api/archive/${id}${qs}`, { method: "DELETE" }));
+  },
+
+  async restoreArchive(id: string): Promise<ArchiveEntry> {
+    return json(await afetch(`${API_BASE}/api/archive/${id}/restore`, { method: "POST" }));
+  },
+
+  // ── FTA VAT Regulatory Updates ─────────────────────────────────────────────
+  async ftaDashboard(): Promise<FtaDashboard> {
+    return json(await afetch(`${API_BASE}/api/fta/dashboard`, { cache: "no-store" }));
+  },
+  async seedFta(): Promise<{ sources_added: number; rules_added: number }> {
+    return json(await afetch(`${API_BASE}/api/fta/seed`, { method: "POST" }));
+  },
+  async listFtaUpdates(params: { status?: string; critical?: boolean } = {}): Promise<FtaUpdate[]> {
+    const p = new URLSearchParams();
+    if (params.status) p.set("status", params.status);
+    if (params.critical) p.set("critical", "true");
+    const qs = p.toString() ? `?${p}` : "";
+    return json(await afetch(`${API_BASE}/api/fta/updates${qs}`, { cache: "no-store" }));
+  },
+  async createFtaUpdate(body: FtaUpdateInput): Promise<FtaUpdate> {
+    return json(
+      await afetch(`${API_BASE}/api/fta/updates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    );
+  },
+  async transitionFtaUpdate(id: string, status: string): Promise<FtaUpdate> {
+    return json(
+      await afetch(`${API_BASE}/api/fta/updates/${id}/transition`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      }),
+    );
+  },
+  async deleteFtaUpdate(id: string): Promise<{ deleted: string }> {
+    return json(await afetch(`${API_BASE}/api/fta/updates/${id}`, { method: "DELETE" }));
+  },
+  async listFtaSources(): Promise<FtaSource[]> {
+    return json(await afetch(`${API_BASE}/api/fta/sources`, { cache: "no-store" }));
+  },
+  async checkFtaSources(): Promise<{ checked: number; changed: number; errors: number }> {
+    return json(await afetch(`${API_BASE}/api/fta/sources/check`, { method: "POST" }));
+  },
+  async listFtaRules(): Promise<FtaRule[]> {
+    return json(await afetch(`${API_BASE}/api/fta/rules`, { cache: "no-store" }));
+  },
+
+  // Bulk archive action (admin): delete (soft) | restore | permanent.
+  async bulkArchive(
+    ids: string[],
+    action: "delete" | "restore" | "permanent",
+  ): Promise<{ processed: number; action: string }> {
+    return json(
+      await afetch(`${API_BASE}/api/archive/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, action }),
+      }),
+    );
+  },
+
+  // Build a tokenized, absolute URL from an API path returned by the backend
+  // (e.g. a related report_url), for use in <a>/<iframe>.
+  apiUrl(path: string) {
+    return withToken(`${API_BASE}${path}`);
   },
 
   async verifyAi(): Promise<{ ok: boolean; provider: string; error: string | null }> {

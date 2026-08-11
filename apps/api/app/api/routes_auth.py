@@ -92,6 +92,49 @@ def me(user: User = Depends(get_current_user)) -> UserOut:
     return _user_out(user)
 
 
+class UpdateAccountRequest(BaseModel):
+    current_password: str
+    new_email: str | None = None
+    new_password: str | None = None
+    full_name: str | None = None
+
+
+@router.patch("/account", response_model=TokenResponse)
+def update_account(
+    body: UpdateAccountRequest,
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TokenResponse:
+    """Change the signed-in user's own login details (email / password / name).
+
+    The current password is required to authorise the change. A fresh token is
+    returned so the client stays signed in with the updated identity.
+    """
+    if not service.verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect")
+
+    new_email = body.new_email.strip().lower() if body.new_email else None
+    if new_email and new_email != user.email:
+        if "@" not in new_email or "." not in new_email:
+            raise HTTPException(status_code=400, detail="Enter a valid email address")
+        existing = service.get_by_email(db, new_email)
+        if existing and existing.id != user.id:
+            raise HTTPException(status_code=409, detail="That email is already in use")
+    else:
+        new_email = None
+
+    if body.new_password is not None and len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+
+    updated = service.update_credentials(
+        db, user,
+        new_email=new_email,
+        new_password=body.new_password or None,
+        full_name=body.full_name,
+    )
+    return _issue_token(updated)
+
+
 class AdminUserCreate(RegisterRequest):
     pass
 

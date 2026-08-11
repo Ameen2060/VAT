@@ -177,6 +177,134 @@ class Vat201TxnRecord(Base):
     vat_return: Mapped[Vat201ReturnRecord] = relationship(back_populates="transactions")
 
 
+class ArchiveFile(Base):
+    """Durable archive of every file attached to the system for analysis, review or
+    transaction processing. Holds its OWN stored copy (independent storage_key) so the
+    original always remains available/unaltered, even if the related review/return is
+    later deleted. Links back to the related record for one-click access to analysis."""
+
+    __tablename__ = "archive_files"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    filename: Mapped[str] = mapped_column(String(512))
+    mime: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    storage_key: Mapped[str] = mapped_column(String(1024))
+    # Where it came from: document_analysis | invoice_review | vat_return | assistant
+    source: Mapped[str] = mapped_column(String(32), default="document_analysis", index=True)
+    # Loose (non-FK) links to the related record so the archive survives their deletion.
+    review_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    vat201_return_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    document_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    uploaded_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    # Soft delete: hidden from the archive but recoverable until auto-purge.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    deleted_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class FtaSource(Base):
+    """An official source monitored for VAT regulatory updates (FTA / MoF / Gov)."""
+
+    __tablename__ = "fta_sources"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    name: Mapped[str] = mapped_column(String(255))
+    url: Mapped[str] = mapped_column(String(1024))
+    authority: Mapped[str] = mapped_column(String(32), default="FTA")  # FTA | MoF | Gov
+    # legislation|regulation|clarification|guide|rates|procedures|registration|refund|penalties
+    category: Mapped[str] = mapped_column(String(32), default="legislation")
+    is_active: Mapped[bool] = mapped_column(default=True)
+    # unchecked | unchanged | changed | error
+    last_status: Mapped[str] = mapped_column(String(16), default="unchecked")
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class FtaUpdate(Base):
+    """A regulatory change-log entry. Progresses NEW -> UNDER_REVIEW -> APPROVED ->
+    IMPLEMENTED (or REJECTED). Detection only ever creates NEW entries — nothing is
+    applied to the live VAT engine without authorised approval."""
+
+    __tablename__ = "fta_updates"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    title: Mapped[str] = mapped_column(String(512))
+    # legislation|executive_regulation|decision|public_clarification|vat_guide|user_guide|
+    # return_requirement|refund_requirement|registration_requirement|deregistration_requirement|
+    # rate_change|treatment_change|penalty|procedure|source_signal
+    update_type: Mapped[str] = mapped_column(String(48), default="public_clarification")
+    # informational | guidance | legally_effective (requirement #10 distinction)
+    classification: Mapped[str] = mapped_column(String(16), default="informational")
+    # new | under_review | approved | implemented | rejected
+    status: Mapped[str] = mapped_column(String(16), default="new", index=True)
+    critical: Mapped[bool] = mapped_column(default=False)
+
+    publication_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    effective_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    previous_rule: Mapped[str | None] = mapped_column(Text, nullable=True)
+    new_rule: Mapped[str | None] = mapped_column(Text, nullable=True)
+    affected_module: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    affected_treatment: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source_ref: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    source_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    approved_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    implemented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    validation_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class VatRuleVersion(Base):
+    """An effective-dated VAT rule with a source reference. Enables source traceability
+    (requirement #9) and historical protection (requirement #7): transactions are
+    calculated under the rule version whose effective window contains their date."""
+
+    __tablename__ = "vat_rule_versions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    rule_key: Mapped[str] = mapped_column(String(128), index=True)  # e.g. "standard_rate"
+    title: Mapped[str] = mapped_column(String(255))
+    category: Mapped[str] = mapped_column(String(32), default="rate")
+    value: Mapped[str | None] = mapped_column(Text, nullable=True)  # e.g. "5" or JSON
+    effective_from: Mapped[str] = mapped_column(String(16))         # YYYY-MM-DD
+    effective_to: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    source_ref: Mapped[str] = mapped_column(String(1024))
+    source_update_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active|draft|superseded
+    # If True, the rule stays OFF for assistant grounding until SME/admin approves it.
+    requires_validation: Mapped[bool] = mapped_column(default=False)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AssistantAudit(Base):
+    """Audit trail for every material VAT Assistant recommendation (source + validation
+    status of each conclusion, for traceability and compliance)."""
+
+    __tablename__ = "assistant_audits"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    question: Mapped[str] = mapped_column(Text)
+    vat_issue: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    applicable_treatment: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    rule_reference: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    fta_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    publication_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    effective_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # grounded | provisional | requires_sme
+    validation_status: Mapped[str] = mapped_column(String(24), default="grounded", index=True)
+    approved_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    user_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class KnowledgeDocument(Base):
     """A source document in the FTA knowledge base (guide, law extract, note)."""
 

@@ -277,6 +277,69 @@ def _customer_name(text: str, labels: dict[str, str], supplier_name: str | None 
     return None
 
 
+# ── source-evidence locator (Level-4 traceability) ────────────────────────────
+def _num_candidates(value) -> list[str]:
+    """Textual forms an amount might appear as in the document (plain, grouped, no
+    trailing zeros)."""
+    try:
+        d = Decimal(str(value))
+    except (InvalidOperation, TypeError):
+        return [str(value)]
+    s = format(d, "f")
+    out = {s}
+    intpart, _, frac = s.partition(".")
+    grouped = f"{int(intpart):,}" if intpart.lstrip("-").isdigit() else intpart
+    out.add(grouped)
+    if frac:
+        out.add(f"{grouped}.{frac}")
+        if frac == "00":
+            out.add(intpart)
+            out.add(grouped)
+    return [c for c in out if c]
+
+
+def _locate(text: str, value, numeric: bool = False) -> dict | None:
+    """Find the first line/character span where `value` appears in the document text."""
+    if value in (None, ""):
+        return None
+    candidates = _num_candidates(value) if numeric else [str(value)]
+    # Longest first so we anchor on the most specific match.
+    candidates = sorted({c for c in candidates if c}, key=len, reverse=True)
+    for i, raw in enumerate(text.splitlines()):
+        line = raw.strip()  # snippet offsets are relative to the trimmed line
+        for c in candidates:
+            idx = line.find(c)
+            if idx >= 0:
+                return {"snippet": line, "line_no": i, "start": idx, "end": idx + len(c)}
+    return None
+
+
+def _build_evidence(text: str, inv: "Invoice") -> dict[str, dict]:
+    """Locate each populated field's value in the document text — the Level-4 provenance."""
+    targets: list[tuple[str, object, bool]] = [
+        ("invoice_number", inv.invoice_number, False),
+        ("invoice_date", inv.invoice_date, False),
+        ("due_date", inv.due_date, False),
+        ("supplier.name", inv.supplier.name, False),
+        ("supplier.trn", inv.supplier.trn, False),
+        ("supplier.email", inv.supplier.email, False),
+        ("supplier.phone", inv.supplier.phone, False),
+        ("recipient.name", inv.recipient.name, False),
+        ("recipient.trn", inv.recipient.trn, False),
+        ("recipient.address", inv.recipient.address, False),
+        ("total_net", inv.total_net, True),
+        ("total_vat", inv.total_vat, True),
+        ("total_gross", inv.total_gross, True),
+        ("payment.iban", inv.payment.iban if inv.payment else None, False),
+    ]
+    ev: dict[str, dict] = {}
+    for field, value, numeric in targets:
+        loc = _locate(text, value, numeric=numeric)
+        if loc:
+            ev[field] = loc
+    return ev
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 def parse_invoice(text: str) -> Invoice:
     inv = Invoice()
@@ -498,6 +561,7 @@ def parse_invoice(text: str) -> Invoice:
         inv.payment = pay
 
     inv.field_confidence = conf
+    inv.field_evidence = _build_evidence(text, inv)
     inv.notes = "Extracted by offline OCR + generic parser."
     return inv
 

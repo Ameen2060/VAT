@@ -30,6 +30,62 @@ class TextExtraction:
     warnings: list[str] = field(default_factory=list)
 
 
+@dataclass
+class LayoutLine:
+    """A visual text line with its bounding box normalised to 0..1 of the page, so a
+    highlight aligns with a page image rendered at any scale."""
+
+    page: int
+    text: str
+    bbox: tuple[float, float, float, float]  # (x0, y0, x1, y1) in 0..1
+
+
+def _ocr_lines_with_boxes(result, width: float, height: float, page: int) -> list[LayoutLine]:
+    """Group RapidOCR boxes into visual lines, returning each line's text + normalised bbox."""
+    items: list[tuple[float, float, float, float, float, str]] = []  # yc, x0, y0, x1, y1, text
+    for entry in result:
+        try:
+            box, text = entry[0], entry[1]
+            xs = [float(p[0]) for p in box]
+            ys = [float(p[1]) for p in box]
+        except Exception:  # noqa: BLE001
+            continue
+        items.append((sum(ys) / len(ys), min(xs), min(ys), max(xs), max(ys), str(text)))
+    if not items or width <= 0 or height <= 0:
+        return []
+    items.sort(key=lambda t: (t[0], t[1]))
+    heights = sorted((it[4] - it[2]) for it in items if it[4] > it[2])
+    median_h = heights[len(heights) // 2] if heights else 12.0
+    threshold = max(median_h * 0.6, 6.0)
+
+    lines: list[LayoutLine] = []
+    cur: list[tuple[float, float, float, float, float, str]] = []
+    cur_y: float | None = None
+
+    def flush(group):
+        if not group:
+            return
+        group.sort(key=lambda t: t[1])
+        text = " ".join(g[5] for g in group).strip()
+        if not text:
+            return
+        x0 = min(g[1] for g in group); y0 = min(g[2] for g in group)
+        x1 = max(g[3] for g in group); y1 = max(g[4] for g in group)
+        lines.append(LayoutLine(page=page, text=text,
+                                bbox=(x0 / width, y0 / height, x1 / width, y1 / height)))
+
+    for it in items:
+        if cur_y is None or abs(it[0] - cur_y) <= threshold:
+            cur.append(it)
+            cur_y = it[0] if cur_y is None else (cur_y + it[0]) / 2
+        else:
+            flush(cur)
+            cur = [it]
+            cur_y = it[0]
+    flush(cur)
+    return lines
+
+
 def _get_ocr_engine():
     global _ocr_engine
     if _ocr_engine is None:
@@ -148,3 +204,61 @@ def extract_image_text(data: bytes) -> TextExtraction:
     if not text:
         out.warnings.append("OCR produced no text from the image (unreadable or unsupported).")
     return out
+
+
+def extract_layout(filename: str, data: bytes) -> list[LayoutLine]:
+    """Per-line text with normalised bounding boxes, for source-evidence highlighting on the
+    rendered page image. PDFs use the embedded text layer (or OCR for scanned pages); images
+    use OCR. Non-visual formats return no layout. Best-effort — returns [] on any failure."""
+    lower = filename.lower()
+    try:
+        if lower.endswith(".pdf"):
+            return _pdf_layout(data)
+        if lower.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".tiff", ".bmp")):
+            return _image_layout(data)
+    except Exception:  # noqa: BLE001 — layout is a nicety; never break extraction
+        return []
+    return []
+
+
+def _pdf_layout(data: bytes) -> list[LayoutLine]:
+    import fitz  # PyMuPDF
+
+    doc = fitz.open(stream=data, filetype="pdf")
+    out: list[LayoutLine] = []
+    for i, page in enumerate(doc):
+        w, h = page.rect.width, page.rect.height
+        embedded = (page.get_text() or "").strip()
+        if len(embedded) >= _SCANNED_TEXT_THRESHOLD and w > 0 and h > 0:
+            # Text layer: group spans into their visual lines (bbox already in points).
+            d = page.get_text("dict")
+            for block in d.get("blocks", []):
+                for line in block.get("lines", []):
+                    spans = line.get("spans", [])
+                    text = "".join(s.get("text", "") for s in spans).strip()
+                    if not text:
+                        continue
+                    x0, y0, x1, y1 = line.get("bbox", (0, 0, 0, 0))
+                    out.append(LayoutLine(page=i, text=text,
+                                          bbox=(x0 / w, y0 / h, x1 / w, y1 / h)))
+        else:
+            # Scanned page: rasterise + OCR, boxes in pixel space of the pixmap.
+            try:
+                pix = page.get_pixmap(matrix=fitz.Matrix(_OCR_RENDER_SCALE, _OCR_RENDER_SCALE))
+                result, _ = _get_ocr_engine()(pix.tobytes("png"))
+                if result:
+                    out.extend(_ocr_lines_with_boxes(result, pix.width, pix.height, i))
+            except Exception:  # noqa: BLE001
+                continue
+    return out
+
+
+def _image_layout(data: bytes) -> list[LayoutLine]:
+    from io import BytesIO
+
+    from PIL import Image
+
+    with Image.open(BytesIO(data)) as im:
+        w, h = im.size
+    result, _ = _get_ocr_engine()(data)
+    return _ocr_lines_with_boxes(result, float(w), float(h), 0) if result else []

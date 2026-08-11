@@ -32,6 +32,27 @@ def create_user(
     return user
 
 
+def update_credentials(
+    db: Session,
+    user: User,
+    *,
+    new_email: str | None = None,
+    new_password: str | None = None,
+    full_name: str | None = None,
+) -> User:
+    """Update the user's login details in place. Caller must have verified identity."""
+    if new_email is not None:
+        user.email = new_email.strip().lower()
+    if full_name is not None:
+        user.full_name = full_name.strip() or None
+    if new_password:
+        user.password_hash = hash_password(new_password)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def authenticate(db: Session, email: str, password: str) -> User | None:
     user = get_by_email(db, email)
     if user and user.is_active and verify_password(password, user.password_hash):

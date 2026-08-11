@@ -138,3 +138,74 @@ def test_various_date_formats():
         ("Issued on Aug 3, 2026", "Aug 3, 2026"),
     ]:
         assert parse_invoice(text).invoice_date == expected
+
+
+def test_field_evidence_traces_values_to_source_text():
+    """Level-4: every extracted value should carry the exact source line it came from."""
+    from app.services.field_extraction import parse_invoice
+
+    text = "\n".join([
+        "KETURAH LIFESCAPING LLC",
+        "Tax Invoice",
+        "Invoice No: INV-2026-100",
+        "Invoice Date: 24 July 2026",
+        "Customer: Palm Retail LLC",
+        "Customer TRN: 100200300400003",
+        "Net: 1,000.00",
+        "VAT 5%: 50.00",
+        "Total: 1,050.00",
+    ])
+    inv = parse_invoice(text)
+    ev = inv.field_evidence
+    # Customer name traces to the "Customer:" line.
+    assert "recipient.name" in ev
+    assert "Palm Retail" in ev["recipient.name"]["snippet"]
+    # Date traces to the invoice-date line.
+    assert "recipient.trn" in ev and "100200300400003" in ev["recipient.trn"]["snippet"]
+    # A total traces back and the char span points at the value.
+    g = ev["total_gross"]
+    line = text.splitlines()[g["line_no"]]
+    assert line[g["start"]:g["end"]] in ("1,050.00", "1050.00", "1,050", "1050")
+
+
+def test_layout_and_bbox_evidence_on_pdf():
+    """Pixel-bbox: a generated text PDF yields layout lines with normalised boxes, and the
+    extraction attaches a page + bbox to each field's source evidence."""
+    import fitz  # PyMuPDF
+    from app.services import ocr
+    from app.services.extraction import _attach_bboxes
+    from app.services.field_extraction import parse_invoice
+
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)  # A4 points
+    lines = [
+        "KETURAH LIFESCAPING LLC",
+        "TRN: 100555666777001",
+        "Tax Invoice",
+        "Invoice No: INV-777",
+        "Invoice Date: 24 July 2026",
+        "Customer: Palm Retail LLC",
+        "Customer TRN: 100200300400003",
+        "Net 1,000.00   VAT 5% 50.00   Total 1,050.00",
+    ]
+    y = 60
+    for ln in lines:
+        page.insert_text((60, y), ln, fontsize=11)
+        y += 28
+    data = doc.tobytes()
+
+    layout = ocr.extract_layout("invoice.pdf", data)
+    assert layout, "expected layout lines from the PDF text layer"
+    # every bbox is normalised 0..1
+    for ln in layout:
+        assert all(0.0 <= c <= 1.0 for c in ln.bbox)
+
+    text = "\n".join(l.text for l in layout)
+    inv = parse_invoice(text)
+    _attach_bboxes(inv, layout)
+    ev = inv.field_evidence
+    # The customer name evidence should carry a page + bbox now.
+    assert "recipient.name" in ev
+    assert ev["recipient.name"].get("page") == 0
+    box = ev["recipient.name"].get("bbox")
+    assert box and len(box) == 4 and box[1] > 0  # somewhere down the page

@@ -22,7 +22,7 @@ from ..vat.schemas import Invoice
 from . import ocr
 
 _IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".tiff", ".bmp")
-_SUPPORTED_EXT = (".pdf", ".docx", ".xlsx", ".csv", ".txt", ".zip", *_IMAGE_EXT)
+_SUPPORTED_EXT = (".pdf", ".docx", ".doc", ".xlsx", ".csv", ".txt", ".zip", *_IMAGE_EXT)
 
 
 class UnsupportedFileError(ValueError):
@@ -52,6 +52,38 @@ def _docx_text(data: bytes) -> str:
         return "\n".join(p.text for p in document.paragraphs).strip()
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _doc_text(data: bytes) -> str:
+    """Best-effort text extraction from a legacy binary Word (.doc) file.
+
+    There is no pure-Python parser for the old OLE `.doc` format in the base
+    dependencies, so we isolate the `WordDocument` stream (via ``olefile`` when
+    available) and scrape readable UTF-16LE / ASCII runs. Good enough to give the
+    assistant the document's text; the caller warns if the result looks empty.
+    """
+    import re
+
+    payload = data
+    try:
+        import olefile  # optional; cleaner extraction when present
+
+        bio = io.BytesIO(data)
+        if olefile.isOleFile(bio):
+            ole = olefile.OleFileIO(bio)
+            if ole.exists("WordDocument"):
+                payload = ole.openstream("WordDocument").read()
+            ole.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+    # UTF-16LE runs cover most modern .doc text; ASCII runs catch older content.
+    utf16 = re.findall(rb"(?:[\x20-\x7e]\x00){4,}", payload)
+    u16 = " ".join(seg.decode("utf-16-le", "ignore") for seg in utf16).strip()
+    ascii_runs = re.findall(rb"[\x20-\x7e]{4,}", payload)
+    asc = " ".join(seg.decode("latin-1", "ignore") for seg in ascii_runs).strip()
+    text = u16 if len(u16) >= len(asc) else asc
+    return re.sub(r"[ \t]{2,}", " ", text).strip()
 
 
 def _xlsx_text(data: bytes) -> str:
@@ -89,6 +121,8 @@ def _read_text(filename: str, data: bytes) -> ocr.TextExtraction:
         return ocr.extract_image_text(data)
     if lower.endswith(".docx"):
         return ocr.TextExtraction(text=_docx_text(data), page_count=1)
+    if lower.endswith(".doc"):
+        return ocr.TextExtraction(text=_doc_text(data), page_count=1)
     if lower.endswith(".xlsx"):
         return ocr.TextExtraction(text=_xlsx_text(data), page_count=1)
     if lower.endswith(".csv"):
@@ -106,11 +140,40 @@ def _build_input(filename: str, data: bytes, mime: str | None, text: str | None)
     return ExtractionInput(filename=filename, mime=mime, text=text or None, doc_bytes=doc_bytes)
 
 
+def _norm_txt(s: str) -> str:
+    import re
+    return re.sub(r"\s+", " ", (s or "").strip().lower())
+
+
+def _attach_bboxes(invoice: Invoice, layout: list) -> None:
+    """Give each extracted field's evidence a page + normalised bbox by matching its source
+    snippet to a layout line — so the UI can highlight the region on the page image."""
+    if not invoice.field_evidence or not layout:
+        return
+    lines = [(_norm_txt(ln.text), ln) for ln in layout]
+    for ev in invoice.field_evidence.values():
+        snip = _norm_txt(ev.get("snippet", ""))
+        if not snip:
+            continue
+        match = None
+        for nt, ln in lines:
+            if nt and (snip in nt or nt in snip):
+                match = ln
+                break
+        if match:
+            ev["page"] = match.page
+            ev["bbox"] = [round(c, 4) for c in match.bbox]
+
+
 def _extract_one(filename: str, data: bytes, mime: str | None) -> ExtractedDoc:
     te = _read_text(filename, data)
     provider = get_ai_provider()
     source = _build_input(filename, data, mime, te.text)
     invoice = provider.extract_invoice(source)
+    try:
+        _attach_bboxes(invoice, ocr.extract_layout(filename, data))
+    except Exception:  # noqa: BLE001 — highlighting is a nicety, never break extraction
+        pass
     return ExtractedDoc(
         label=filename,
         invoice=invoice,

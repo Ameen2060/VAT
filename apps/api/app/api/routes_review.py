@@ -8,8 +8,10 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from ..auth.deps import get_current_user
 from ..core.database import get_db
-from ..models import Document, Review
+from ..models import Document, Review, User
+from ..services import archive as archive_svc
 from ..services import report as report_svc
 from ..services.extraction import UnsupportedFileError
 from ..services.field_extraction import missing_fields
@@ -82,6 +84,7 @@ async def upload_document(
     file: UploadFile = File(...),
     category: str = Form("invoice"),
     db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[ReviewSummary]:
     data = await file.read()
     if not data:
@@ -94,6 +97,13 @@ async def upload_document(
         raise HTTPException(status_code=415, detail=str(e)) from e
     if not reviews:
         raise HTTPException(status_code=422, detail="No invoice could be extracted from the file.")
+    # Archive the original upload, linked to the (first) review it produced.
+    archive_svc.archive_file(
+        db, filename=file.filename or "upload", data=data, mime=file.content_type,
+        source=archive_svc.SOURCE_DOCUMENT_ANALYSIS,
+        review_id=reviews[0].id, document_id=reviews[0].document_id,
+        uploaded_by=getattr(user, "email", None),
+    )
     return [_summary(r, file.filename or "upload") for r in reviews]
 
 
@@ -242,6 +252,37 @@ def get_document_file(document_id: str, db: Session = Depends(get_db)):
         media_type=media,
         headers={"Content-Disposition": f'inline; filename="{doc.filename}"'},
     )
+
+
+@router.get("/documents/{document_id}/page/{page}")
+def get_document_page(document_id: str, page: int, scale: float = 2.0, db: Session = Depends(get_db)):
+    """Render one page of the document to PNG, so the UI can overlay source-evidence
+    highlights on a raster image (works for both PDFs and image uploads)."""
+    doc = db.get(Document, document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    try:
+        data = get_storage().read(doc.storage_key)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail="Stored file unavailable") from e
+    lower = doc.filename.lower()
+    scale = max(1.0, min(float(scale), 4.0))
+    if lower.endswith(".pdf"):
+        try:
+            import fitz
+            d = fitz.open(stream=data, filetype="pdf")
+            if page < 0 or page >= d.page_count:
+                raise HTTPException(status_code=404, detail="Page out of range")
+            pix = d[page].get_pixmap(matrix=fitz.Matrix(scale, scale))
+            return Response(content=pix.tobytes("png"), media_type="image/png")
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail="Could not render PDF page") from e
+    if lower.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".tiff", ".bmp")):
+        ext = "." + lower.rsplit(".", 1)[-1]
+        return Response(content=data, media_type=_MIME_BY_EXT.get(ext, "image/png"))
+    raise HTTPException(status_code=400, detail="No page image available for this file type")
 
 
 @router.patch("/reviews/{review_id}/status")
