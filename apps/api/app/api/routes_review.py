@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import csv
+import io
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
@@ -120,6 +123,66 @@ def list_reviews(
         stmt = stmt.where(Review.status == status)
     stmt = stmt.order_by(Review.created_at.desc())
     return [_summary(r, fn) for r, fn in db.execute(stmt).all()]
+
+
+@router.get("/reviews/export")
+def export_reviews(
+    format: str = Query("csv", pattern="^(csv|xlsx)$"),
+    risk: str | None = Query(None),
+    status: str | None = Query(None),
+    compliance: str | None = Query(None),
+    q: str | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Export the reviewed-documents list (respecting the Repository filters)."""
+    stmt = select(Review, Document.filename).join(Document, Review.document_id == Document.id)
+    if risk:
+        stmt = stmt.where(Review.risk_level == risk)
+    if status:
+        stmt = stmt.where(Review.status == status)
+    if compliance:
+        stmt = stmt.where(Review.compliance_status == compliance)
+    stmt = stmt.order_by(Review.created_at.desc())
+    rows = db.execute(stmt).all()
+    if q:
+        ql = q.lower()
+        rows = [(r, fn) for r, fn in rows
+                if ql in f"{fn} {(r.result_json or {}).get('summary', '')}".lower()]
+
+    header = ["Filename", "Compliance", "Risk", "Status", "Read", "Summary", "Review ID",
+              "Document ID", "Created"]
+
+    def record(r: Review, fn: str) -> list:
+        return [fn, r.compliance_status, r.risk_level, r.status, "yes" if r.is_read else "no",
+                (r.result_json or {}).get("summary", ""), r.id, r.document_id,
+                r.created_at.isoformat() if r.created_at else ""]
+
+    if format == "csv":
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(header)
+        for r, fn in rows:
+            w.writerow(record(r, fn))
+        return Response(
+            content=buf.getvalue(), media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="repository.csv"'},
+        )
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Repository"
+    ws.append(header)
+    for r, fn in rows:
+        ws.append(record(r, fn))
+    out = io.BytesIO()
+    wb.save(out)
+    return Response(
+        content=out.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="repository.xlsx"'},
+    )
 
 
 @router.get("/reviews/{review_id}")

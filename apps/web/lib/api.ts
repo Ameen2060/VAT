@@ -208,6 +208,19 @@ export const api = {
     return json(await afetch(`${API_BASE}/api/reviews/${id}`, { method: "DELETE" }));
   },
 
+  // Tokenized download URL for the repository export (respects the active filters).
+  reviewsExportUrl(
+    format: "csv" | "xlsx",
+    filters: { risk?: string; status?: string; compliance?: string; q?: string } = {},
+  ) {
+    const p = new URLSearchParams({ format });
+    if (filters.risk) p.set("risk", filters.risk);
+    if (filters.status) p.set("status", filters.status);
+    if (filters.compliance) p.set("compliance", filters.compliance);
+    if (filters.q) p.set("q", filters.q);
+    return withToken(`${API_BASE}/api/reviews/export?${p}`);
+  },
+
   async markRead(id: string, read = true) {
     return json(
       await afetch(`${API_BASE}/api/reviews/${id}/read`, {

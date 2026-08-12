@@ -86,20 +86,32 @@ export default function RepositoryPage() {
         </select>
       </div>
 
-      <div className="flex items-center justify-between text-xs text-muted">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
         <span>
           Showing <b className="text-fg">{filtered.length}</b>
           {filtered.length !== reviews.length ? ` of ${reviews.length}` : ""} document
           {reviews.length === 1 ? "" : "s"}
         </span>
-        {(q || risk || status || compliance) && (
-          <button
-            onClick={() => { setQ(""); setRisk(""); setStatus(""); setCompliance(""); }}
-            className="rounded-lg border border-border px-2.5 py-1 font-medium hover:bg-elevated"
-          >
-            Clear filters
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {(q || risk || status || compliance) && (
+            <button
+              onClick={() => { setQ(""); setRisk(""); setStatus(""); setCompliance(""); }}
+              className="rounded-lg border border-border px-2.5 py-1 font-medium hover:bg-elevated"
+            >
+              Clear filters
+            </button>
+          )}
+          {reviews.length > 0 &&
+            (["csv", "xlsx"] as const).map((f) => (
+              <a
+                key={f}
+                href={api.reviewsExportUrl(f, { risk, status, compliance, q })}
+                className="rounded-lg border border-border px-2.5 py-1 font-medium hover:bg-elevated"
+              >
+                Export {f === "csv" ? "CSV" : "Excel"}
+              </a>
+            ))}
+        </div>
       </div>
 
       {error && (
