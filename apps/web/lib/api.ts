@@ -35,6 +35,14 @@ function withToken(url: string): string {
   return url + (url.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token);
 }
 
+// The server is unreachable when the gateway can't reach the backend (502/503/504).
+const SERVER_DOWN_MSG =
+  "The server is temporarily unavailable — it may be starting up or reconnecting. Please retry in a moment.";
+
+export function isServerDown(status: number): boolean {
+  return status === 502 || status === 503 || status === 504;
+}
+
 async function json<T>(res: Response): Promise<T> {
   if (res.status === 401) {
     clearSession();
@@ -43,6 +51,9 @@ async function json<T>(res: Response): Promise<T> {
     }
     throw new Error("Session expired — please sign in again.");
   }
+  if (isServerDown(res.status)) {
+    throw new Error(SERVER_DOWN_MSG);
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${text || res.statusText}`);
@@ -50,19 +61,29 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// Fetch with the auth header attached.
-function afetch(url: string, opts: RequestInit = {}): Promise<Response> {
-  return fetch(url, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
+// Fetch with the auth header attached. Network failures become a friendly message.
+async function afetch(url: string, opts: RequestInit = {}): Promise<Response> {
+  try {
+    return await fetch(url, { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } });
+  } catch {
+    throw new Error(SERVER_DOWN_MSG);
+  }
 }
 
 export const api = {
   // ── Auth ───────────────────────────────────────────────────────────────────
   async login(email: string, password: string): Promise<{ token: string; user: AuthUser }> {
-    const res = await fetch(`${API_BASE}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+    } catch {
+      throw new Error(SERVER_DOWN_MSG);
+    }
+    if (isServerDown(res.status)) throw new Error(SERVER_DOWN_MSG);
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw new Error(body.detail || "Incorrect email or password");
@@ -74,6 +95,61 @@ export const api = {
 
   async me(): Promise<AuthUser> {
     return json(await afetch(`${API_BASE}/api/auth/me`, { cache: "no-store" }));
+  },
+
+  // ── Password reset / recovery ──────────────────────────────────────────────
+  async forgotPassword(email: string): Promise<{ message: string; reset_url: string | null }> {
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+    } catch {
+      throw new Error(SERVER_DOWN_MSG);
+    }
+    if (isServerDown(res.status)) throw new Error(SERVER_DOWN_MSG);
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}));
+      throw new Error(b.detail || "Request failed. Please try again.");
+    }
+    return res.json();
+  },
+
+  async resetPassword(token: string, newPassword: string): Promise<AuthUser> {
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}/api/auth/reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token, new_password: newPassword }),
+      });
+    } catch {
+      throw new Error(SERVER_DOWN_MSG);
+    }
+    if (isServerDown(res.status)) throw new Error(SERVER_DOWN_MSG);
+    if (!res.ok) {
+      const b = await res.json().catch(() => ({}));
+      throw new Error(b.detail || "Reset failed.");
+    }
+    const data = await res.json();
+    setSession(data.access_token, data.user); // sign in with the new password
+    return data.user;
+  },
+
+  async listUsers(): Promise<AuthUser[]> {
+    return json(await afetch(`${API_BASE}/api/auth/users`, { cache: "no-store" }));
+  },
+
+  async adminResetPassword(userId: string): Promise<{ user_email: string; reset_url: string; expires_minutes: number }> {
+    return json(await afetch(`${API_BASE}/api/auth/users/${userId}/reset-password`, { method: "POST" }));
+  },
+
+  async authAudit(): Promise<
+    { id: string; event: string; user_email: string | null; actor_email: string | null; detail: string | null; created_at: string | null }[]
+  > {
+    return json(await afetch(`${API_BASE}/api/auth/audit`, { cache: "no-store" }));
   },
 
   // Change the signed-in user's own login details. Requires the current password.

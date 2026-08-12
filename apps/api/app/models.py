@@ -37,6 +37,34 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
+class PasswordResetToken(Base):
+    """A single-use, time-limited password-reset token (only its hash is stored)."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class AuthAudit(Base):
+    """Security audit trail for password reset / change activities."""
+
+    __tablename__ = "auth_audits"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    # forgot_request | reset_success | reset_failed | password_changed | admin_reset_initiated
+    event: Mapped[str] = mapped_column(String(32), index=True)
+    user_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    actor_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    detail: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    ip: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class Document(Base):
     __tablename__ = "documents"
 

@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     admin_email: str = "admin@vat.local"
     admin_password: str = "ChangeMe!123"  # bootstrap only; change on first login
 
+    # Password reset
+    reset_token_ttl_minutes: int = 30                  # link/OTP lifetime
+    reset_max_requests_per_hour: int = 5               # per email/IP rate limit
+    app_base_url: str = "http://localhost:3000"        # for building reset links
+    # DEV/DEMO ONLY: expose the reset link in the API response (no SMTP configured).
+    # Leave FALSE in production so account existence is never revealed.
+    expose_reset_link: bool = False
+
     # VAT domain constants (current UAE law defaults)
     vat_standard_rate: float = 0.05
     vat_mandatory_reg_threshold_aed: float = 375_000

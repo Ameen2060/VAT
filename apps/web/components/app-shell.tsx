@@ -17,6 +17,7 @@ const NAV = [
   { href: "/knowledge", label: "Knowledge Base", icon: "book" },
   { href: "/repository", label: "Repository", icon: "folder" },
   { href: "/archive", label: "Archive", icon: "archive" },
+  { href: "/users", label: "User Management", icon: "users", adminOnly: true },
 ];
 
 function Icon({ name }: { name: string }) {
@@ -33,6 +34,7 @@ function Icon({ name }: { name: string }) {
     gear: "M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 13a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z",
     archive: "M3 4h18v4H3zM5 8v12h14V8M9 12h6",
     bell: "M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0",
+    users: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
   };
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
@@ -49,9 +51,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [ai, setAi] = useState<AiStatus | null>(null);
   const [ready, setReady] = useState(false);
 
+  const isPublic = pathname === "/login" || pathname === "/reset-password";
+
   // Auth gate: unauthenticated users are sent to /login (client-side).
   useEffect(() => {
-    if (pathname === "/login") {
+    if (isPublic) {
       setReady(true);
       return;
     }
@@ -60,15 +64,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       return;
     }
     setReady(true);
-  }, [pathname, router]);
+  }, [pathname, router, isPublic]);
 
   useEffect(() => {
-    if (pathname === "/login" || !isAuthenticated()) return;
+    if (isPublic || !isAuthenticated()) return;
     api.aiStatus().then(setAi).catch(() => setAi(null));
-  }, [pathname]);
+  }, [pathname, isPublic]);
 
-  // The login page renders without the app chrome.
-  if (pathname === "/login") return <>{children}</>;
+  // Public auth pages render without the app chrome.
+  if (isPublic) return <>{children}</>;
   if (!ready) return null;
 
   const user = getUser();
@@ -91,7 +95,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <nav className="flex-1 space-y-1 px-3 py-2">
-          {NAV.map((item) => {
+          {NAV.filter((item) => !item.adminOnly || user?.role === "admin").map((item) => {
             const active = pathname === item.href;
             return (
               <Link

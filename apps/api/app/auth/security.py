@@ -39,6 +39,31 @@ def verify_password(password: str, stored: str) -> bool:
         return False
 
 
+def generate_reset_token() -> str:
+    """A high-entropy, URL-safe reset token (the raw value is emailed; only its hash stored)."""
+    return _b64(os.urandom(32))
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def validate_password_strength(password: str) -> str | None:
+    """Return an error message if the password is too weak, else None.
+
+    Policy: at least 8 characters, with lower-case, upper-case and a digit.
+    """
+    if len(password or "") < 8:
+        return "Password must be at least 8 characters."
+    if not any(c.islower() for c in password):
+        return "Password must include a lower-case letter."
+    if not any(c.isupper() for c in password):
+        return "Password must include an upper-case letter."
+    if not any(c.isdigit() for c in password):
+        return "Password must include a number."
+    return None
+
+
 def create_access_token(*, subject: str, role: str, secret: str, algorithm: str, ttl_minutes: int) -> str:
     now = datetime.now(timezone.utc)
     payload = {

@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..auth import service
 from ..auth.deps import get_current_user, get_optional_user, require_admin
-from ..auth.security import create_access_token
+from ..auth.security import create_access_token, validate_password_strength
 from ..core.config import get_settings
 from ..core.database import get_db
-from ..models import User
+from ..models import AuthAudit, User
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 _VALID_ROLES = {"admin", "reviewer", "viewer"}
@@ -123,8 +124,10 @@ def update_account(
     else:
         new_email = None
 
-    if body.new_password is not None and len(body.new_password) < 8:
-        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    if body.new_password:
+        err = validate_password_strength(body.new_password)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
 
     updated = service.update_credentials(
         db, user,
@@ -132,7 +135,127 @@ def update_account(
         new_password=body.new_password or None,
         full_name=body.full_name,
     )
+    if body.new_password:
+        service.log_auth_event(db, "password_changed", user_email=updated.email,
+                               actor_email=updated.email, detail="Changed via account settings")
     return _issue_token(updated)
+
+
+# ── Password reset / forgot password ─────────────────────────────────────────
+_GENERIC_MSG = "If an account with that email exists, a password reset link has been sent."
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ForgotPasswordResponse(BaseModel):
+    message: str
+    # DEV/DEMO only: present when EXPOSE_RESET_LINK is enabled (no SMTP configured).
+    reset_url: str | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+def _reset_url(token: str) -> str:
+    base = get_settings().app_base_url.rstrip("/")
+    return f"{base}/reset-password?token={token}"
+
+
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+def forgot_password(
+    body: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)
+) -> ForgotPasswordResponse:
+    """Start password recovery. Always returns the same generic message so account
+    existence is never revealed. Rate-limited per email + client IP."""
+    s = get_settings()
+    email = (body.email or "").strip().lower()
+    ip = request.client.host if request.client else None
+
+    if service.rate_limited(f"forgot:{email}:{ip}", s.reset_max_requests_per_hour):
+        service.log_auth_event(db, "forgot_request", user_email=email, ip=ip, detail="rate limited")
+        raise HTTPException(status_code=429, detail="Too many reset requests. Please try again later.")
+
+    user = service.get_by_email(db, email)
+    reset_url: str | None = None
+    if user and user.is_active:
+        raw = service.create_reset_token(db, user, s.reset_token_ttl_minutes)
+        url = _reset_url(raw)
+        # Delivery: email via SMTP if configured; otherwise the link is available in server
+        # logs (and, in dev/demo, optionally in the response).
+        print(f"[password-reset] link for {email}: {url}")
+        if s.expose_reset_link:
+            reset_url = url
+        service.log_auth_event(db, "forgot_request", user_email=email, ip=ip, detail="token issued")
+    else:
+        service.log_auth_event(db, "forgot_request", user_email=email, ip=ip, detail="no account")
+
+    return ForgotPasswordResponse(message=_GENERIC_MSG, reset_url=reset_url)
+
+
+@router.post("/reset-password", response_model=TokenResponse)
+def reset_password(
+    body: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)
+) -> TokenResponse:
+    """Complete recovery: set a new password using a valid, unexpired token. The current
+    password is NOT required here (this is the verified recovery path)."""
+    err = validate_password_strength(body.new_password)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    ip = request.client.host if request.client else None
+    user = service.reset_password_with_token(db, body.token.strip(), body.new_password)
+    if not user:
+        service.log_auth_event(db, "reset_failed", ip=ip, detail="invalid or expired token")
+        raise HTTPException(status_code=400, detail="This reset link is invalid or has expired. Request a new one.")
+    service.log_auth_event(db, "reset_success", user_email=user.email, ip=ip)
+    return _issue_token(user)  # sign the user in with the new password
+
+
+class AdminResetResponse(BaseModel):
+    user_email: str
+    reset_url: str
+    expires_minutes: int
+
+
+@router.post("/users/{user_id}/reset-password", response_model=AdminResetResponse)
+def admin_reset_password(
+    user_id: str, admin: User = Depends(require_admin), db: Session = Depends(get_db)
+) -> AdminResetResponse:
+    """Admin-initiated reset: issue a one-time reset link for a user WITHOUT viewing or
+    changing their password. The admin hands the link to the user (or it is emailed)."""
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    s = get_settings()
+    raw = service.create_reset_token(db, target, s.reset_token_ttl_minutes)
+    service.log_auth_event(db, "admin_reset_initiated", user_email=target.email,
+                           actor_email=getattr(admin, "email", None))
+    return AdminResetResponse(
+        user_email=target.email, reset_url=_reset_url(raw), expires_minutes=s.reset_token_ttl_minutes
+    )
+
+
+class AuthAuditOut(BaseModel):
+    id: str
+    event: str
+    user_email: str | None
+    actor_email: str | None
+    detail: str | None
+    created_at: str | None
+
+
+@router.get("/audit", response_model=list[AuthAuditOut])
+def auth_audit(_: User = Depends(require_admin), db: Session = Depends(get_db)) -> list[AuthAuditOut]:
+    """Security audit trail of password reset / change events (admin only)."""
+    rows = db.execute(select(AuthAudit).order_by(AuthAudit.created_at.desc()).limit(300)).scalars()
+    return [
+        AuthAuditOut(id=a.id, event=a.event, user_email=a.user_email, actor_email=a.actor_email,
+                     detail=a.detail, created_at=a.created_at.isoformat() if a.created_at else None)
+        for a in rows
+    ]
 
 
 class AdminUserCreate(RegisterRequest):

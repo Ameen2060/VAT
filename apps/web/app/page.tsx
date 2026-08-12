@@ -174,10 +174,16 @@ export default function DashboardPage() {
       </div>
 
       {error && (
-        <Card className="border-danger/40 bg-danger/5 p-4 text-sm text-danger">
-          Could not reach the API at{" "}
-          <code>{process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"}</code>. Start the
-          backend with <code>uvicorn app.main:app --reload</code>. ({error})
+        <Card className="border-warning/40 bg-warning/5 p-4 text-sm text-warning">
+          <div className="flex items-center justify-between gap-3">
+            <span>⚠️ {error}</span>
+            <button
+              onClick={() => refresh()}
+              className="shrink-0 rounded-lg border border-warning/40 px-3 py-1 text-xs font-medium hover:bg-warning/10"
+            >
+              Retry
+            </button>
+          </div>
         </Card>
       )}
 
