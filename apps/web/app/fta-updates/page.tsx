@@ -78,11 +78,19 @@ function Pipeline({ status }: { status: string }) {
   );
 }
 
-function Stat({ label, value, tone = "" }: { label: string; value: number; tone?: string }) {
+function Stat({
+  label, value, tone = "", onClick, active = false,
+}: { label: string; value: number; tone?: string; onClick?: () => void; active?: boolean }) {
   return (
-    <Card className="p-4">
-      <div className="text-xs text-muted">{label}</div>
-      <div className={`mt-1 text-2xl font-semibold ${tone}`}>{value}</div>
+    <Card
+      className={`p-4 ${onClick ? "cursor-pointer transition-colors hover:border-brand hover:bg-elevated" : ""} ${
+        active ? "border-brand ring-1 ring-brand" : ""
+      }`}
+    >
+      <button type="button" onClick={onClick} disabled={!onClick} className="w-full text-left">
+        <div className="text-xs text-muted">{label}</div>
+        <div className={`mt-1 text-2xl font-semibold ${tone}`}>{value}</div>
+      </button>
     </Card>
   );
 }
@@ -106,7 +114,23 @@ export default function FtaUpdatesPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<FtaUpdateInput>(EMPTY);
   const [tab, setTab] = useState<"log" | "sources" | "rules">("log");
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterCritical, setFilterCritical] = useState(false);
   const isAdmin = typeof window !== "undefined" && getUser()?.role === "admin";
+
+  // Drill-down: pre-filter from ?status= / ?critical= (e.g. clicking a dashboard tile).
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const st = p.get("status");
+    if (st) setFilterStatus(st);
+    if (p.get("critical") === "1" || p.get("critical") === "true") setFilterCritical(true);
+    if (st || p.get("critical")) setTab("log");
+  }, []);
+
+  const shownUpdates = updates.filter(
+    (u) => (!filterStatus || u.status === filterStatus) && (!filterCritical || u.critical),
+  );
+  const filterActive = !!filterStatus || filterCritical;
 
   const refresh = async () => {
     try {
@@ -221,14 +245,24 @@ export default function FtaUpdatesPage() {
       {error && <Card className="border-danger/40 bg-danger/5 p-4 text-sm text-danger">{error}</Card>}
       {notice && <Card className="border-success/40 bg-success/5 p-4 text-sm text-success">{notice}</Card>}
 
-      {/* Dashboard */}
+      {/* Dashboard — click a tile to filter the change log below */}
       {dash && (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-          <Stat label="New" value={dash.new} tone="text-brand" />
-          <Stat label="Under review" value={dash.under_review} tone="text-warning" />
-          <Stat label="Approved" value={dash.approved} tone="text-success" />
-          <Stat label="Implemented" value={dash.implemented} />
-          <Stat label="Critical (pending)" value={dash.critical} tone="text-danger" />
+          <Stat label="New" value={dash.new} tone="text-brand"
+            active={filterStatus === "new" && !filterCritical}
+            onClick={() => { setTab("log"); setFilterCritical(false); setFilterStatus(filterStatus === "new" ? "" : "new"); }} />
+          <Stat label="Under review" value={dash.under_review} tone="text-warning"
+            active={filterStatus === "under_review" && !filterCritical}
+            onClick={() => { setTab("log"); setFilterCritical(false); setFilterStatus(filterStatus === "under_review" ? "" : "under_review"); }} />
+          <Stat label="Approved" value={dash.approved} tone="text-success"
+            active={filterStatus === "approved" && !filterCritical}
+            onClick={() => { setTab("log"); setFilterCritical(false); setFilterStatus(filterStatus === "approved" ? "" : "approved"); }} />
+          <Stat label="Implemented" value={dash.implemented}
+            active={filterStatus === "implemented" && !filterCritical}
+            onClick={() => { setTab("log"); setFilterCritical(false); setFilterStatus(filterStatus === "implemented" ? "" : "implemented"); }} />
+          <Stat label="Critical (pending)" value={dash.critical} tone="text-danger"
+            active={filterCritical}
+            onClick={() => { setTab("log"); setFilterStatus(""); setFilterCritical((v) => !v); }} />
         </div>
       )}
 
@@ -284,9 +318,25 @@ export default function FtaUpdatesPage() {
       {/* Change log */}
       {tab === "log" && (
         <Card className="overflow-hidden">
-          {updates.length === 0 ? (
+          {filterActive && (
+            <div className="flex items-center justify-between gap-2 border-b border-border bg-elevated/50 px-4 py-2 text-xs">
+              <span>
+                Filtered:
+                {filterStatus && <span className="ml-1 rounded-full bg-brand/15 px-2 py-0.5 font-medium text-brand">{STATUS_LABEL[filterStatus] ?? filterStatus}</span>}
+                {filterCritical && <span className="ml-1 rounded-full bg-danger/15 px-2 py-0.5 font-medium text-danger">Critical</span>}
+                <span className="ml-2 text-muted">({shownUpdates.length} of {updates.length})</span>
+              </span>
+              <button onClick={() => { setFilterStatus(""); setFilterCritical(false); }}
+                className="rounded-lg border border-border px-2 py-0.5 font-medium hover:bg-elevated">
+                Clear filter
+              </button>
+            </div>
+          )}
+          {shownUpdates.length === 0 ? (
             <div className="px-5 py-12 text-center text-sm text-muted">
-              No regulatory updates logged yet. {isAdmin ? "Use “Check sources now” to scan official pages, or “Log an update” to record a change manually." : ""}
+              {updates.length === 0
+                ? `No regulatory updates logged yet. ${isAdmin ? "Use “Check sources now” to scan official pages, or “Log an update” to record a change manually." : ""}`
+                : "No updates match this filter."}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -301,7 +351,7 @@ export default function FtaUpdatesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {updates.map((u) => (
+                  {shownUpdates.map((u) => (
                     <Fragment key={u.id}>
                       <tr className="border-t border-border align-top hover:bg-elevated/40">
                         <td className="px-4 py-2">

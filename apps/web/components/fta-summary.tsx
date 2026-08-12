@@ -16,12 +16,12 @@ export function FtaSummary() {
 
   if (!d) return null;
 
-  const cells: { label: string; value: number; tone?: string }[] = [
-    { label: "New", value: d.new, tone: "text-brand" },
-    { label: "Under review", value: d.under_review, tone: "text-warning" },
-    { label: "Approved", value: d.approved, tone: "text-success" },
-    { label: "Implemented", value: d.implemented },
-    { label: "Critical", value: d.critical, tone: "text-danger" },
+  const cells: { label: string; value: number; tone?: string; href: string }[] = [
+    { label: "New", value: d.new, tone: "text-brand", href: "/fta-updates?status=new" },
+    { label: "Under review", value: d.under_review, tone: "text-warning", href: "/fta-updates?status=under_review" },
+    { label: "Approved", value: d.approved, tone: "text-success", href: "/fta-updates?status=approved" },
+    { label: "Implemented", value: d.implemented, href: "/fta-updates?status=implemented" },
+    { label: "Critical", value: d.critical, tone: "text-danger", href: "/fta-updates?critical=1" },
   ];
 
   return (
@@ -41,10 +41,15 @@ export function FtaSummary() {
       </div>
       <div className="grid grid-cols-3 gap-3 text-center sm:grid-cols-5">
         {cells.map((c) => (
-          <div key={c.label} className="rounded-lg border border-border py-2">
+          <Link
+            key={c.label}
+            href={c.href}
+            title={`View ${c.label.toLowerCase()} updates`}
+            className="rounded-lg border border-border py-2 transition-colors hover:border-brand hover:bg-elevated"
+          >
             <div className={`text-xl font-semibold ${c.tone ?? ""}`}>{c.value}</div>
             <div className="text-[10px] uppercase text-muted">{c.label}</div>
-          </div>
+          </Link>
         ))}
       </div>
       {d.upcoming_effective.length > 0 && (
