@@ -209,7 +209,11 @@ export default function DashboardPage() {
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="font-semibold">Risk distribution</h2>
                 <span className="text-xs text-muted">
-                  {d.failed} fail · {d.warning} warning · {d.passed} pass
+                  <Link href="/repository?compliance=fail" className="rounded px-1 hover:bg-elevated hover:text-danger">{d.failed} fail</Link>
+                  {" · "}
+                  <Link href="/repository?compliance=warning" className="rounded px-1 hover:bg-elevated hover:text-warning">{d.warning} warning</Link>
+                  {" · "}
+                  <Link href="/repository?compliance=pass" className="rounded px-1 hover:bg-elevated hover:text-success">{d.passed} pass</Link>
                 </span>
               </div>
               <RiskBar d={d} />

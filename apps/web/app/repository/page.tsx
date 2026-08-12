@@ -12,14 +12,17 @@ export default function RepositoryPage() {
   const [q, setQ] = useState("");
   const [risk, setRisk] = useState("");
   const [status, setStatus] = useState("");
+  const [compliance, setCompliance] = useState("");
 
   useEffect(() => {
-    // Drill-down: pre-filter from ?risk= / ?status= (e.g. a dashboard tile click).
+    // Drill-down: pre-filter from ?risk= / ?status= / ?compliance= (dashboard tile click).
     const p = new URLSearchParams(window.location.search);
     const r = p.get("risk");
     const s = p.get("status");
+    const c = p.get("compliance");
     if (r) setRisk(r);
     if (s) setStatus(s);
+    if (c) setCompliance(c);
     api.listReviews().then(setReviews).catch((e) => setError(String(e.message ?? e)));
   }, []);
 
@@ -29,9 +32,10 @@ export default function RepositoryPage() {
         (r) =>
           (!risk || r.risk_level === risk) &&
           (!status || r.status === status) &&
+          (!compliance || r.compliance_status === compliance) &&
           (!q || `${r.filename} ${r.summary}`.toLowerCase().includes(q.toLowerCase())),
       ),
-    [reviews, risk, status, q],
+    [reviews, risk, status, compliance, q],
   );
 
   return (
@@ -57,6 +61,16 @@ export default function RepositoryPage() {
           <option value="high">High</option>
           <option value="medium">Medium</option>
           <option value="low">Low</option>
+        </select>
+        <select
+          value={compliance}
+          onChange={(e) => setCompliance(e.target.value)}
+          className="rounded-lg border border-border bg-surface px-3 py-2 text-sm"
+        >
+          <option value="">All results</option>
+          <option value="pass">Pass</option>
+          <option value="warning">Warning</option>
+          <option value="fail">Fail</option>
         </select>
         <select
           value={status}
