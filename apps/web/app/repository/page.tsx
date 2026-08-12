@@ -86,6 +86,22 @@ export default function RepositoryPage() {
         </select>
       </div>
 
+      <div className="flex items-center justify-between text-xs text-muted">
+        <span>
+          Showing <b className="text-fg">{filtered.length}</b>
+          {filtered.length !== reviews.length ? ` of ${reviews.length}` : ""} document
+          {reviews.length === 1 ? "" : "s"}
+        </span>
+        {(q || risk || status || compliance) && (
+          <button
+            onClick={() => { setQ(""); setRisk(""); setStatus(""); setCompliance(""); }}
+            className="rounded-lg border border-border px-2.5 py-1 font-medium hover:bg-elevated"
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
       {error && (
         <Card className="border-danger/40 bg-danger/5 p-4 text-sm text-danger">{error}</Card>
       )}
