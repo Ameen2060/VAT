@@ -8,13 +8,21 @@ import { Card, StatusBadge } from "@/components/ui";
 import { ActionMenu } from "@/components/action-menu";
 import { FtaSummary } from "@/components/fta-summary";
 
-function Kpi({ label, value, tone = "" }: { label: string; value: number; tone?: string }) {
-  return (
-    <Card className="p-5">
+function Kpi({ label, value, tone = "", href }: { label: string; value: number; tone?: string; href?: string }) {
+  const body = (
+    <>
       <div className="text-sm text-muted">{label}</div>
       <div className={`mt-1 text-3xl font-semibold ${tone}`}>{value}</div>
-    </Card>
+    </>
   );
+  if (href) {
+    return (
+      <Link href={href} className="block">
+        <Card className="p-5 transition-colors hover:border-brand hover:bg-elevated">{body}</Card>
+      </Link>
+    );
+  }
+  return <Card className="p-5">{body}</Card>;
 }
 
 function RiskBar({ d }: { d: DashboardSummary }) {
@@ -190,10 +198,10 @@ export default function DashboardPage() {
       {d && (
         <>
           <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <Kpi label="Invoices reviewed" value={d.total_reviews} />
-            <Kpi label="High-risk issues" value={d.high_risk} tone="text-danger" />
-            <Kpi label="Medium-risk issues" value={d.medium_risk} tone="text-warning" />
-            <Kpi label="Low-risk issues" value={d.low_risk} tone="text-success" />
+            <Kpi label="Invoices reviewed" value={d.total_reviews} href="/repository" />
+            <Kpi label="High-risk issues" value={d.high_risk} tone="text-danger" href="/repository?risk=high" />
+            <Kpi label="Medium-risk issues" value={d.medium_risk} tone="text-warning" href="/repository?risk=medium" />
+            <Kpi label="Low-risk issues" value={d.low_risk} tone="text-success" href="/repository?risk=low" />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-3">
@@ -205,29 +213,29 @@ export default function DashboardPage() {
                 </span>
               </div>
               <RiskBar d={d} />
-              <div className="mt-3 flex gap-4 text-xs text-muted">
-                <span className="flex items-center gap-1.5">
+              <div className="mt-3 flex gap-3 text-xs text-muted">
+                <Link href="/repository?risk=high" className="flex items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-elevated hover:text-fg">
                   <i className="inline-block h-2 w-2 rounded-full bg-danger" /> High {d.high_risk}
-                </span>
-                <span className="flex items-center gap-1.5">
+                </Link>
+                <Link href="/repository?risk=medium" className="flex items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-elevated hover:text-fg">
                   <i className="inline-block h-2 w-2 rounded-full bg-warning" /> Medium {d.medium_risk}
-                </span>
-                <span className="flex items-center gap-1.5">
+                </Link>
+                <Link href="/repository?risk=low" className="flex items-center gap-1.5 rounded px-1.5 py-0.5 hover:bg-elevated hover:text-fg">
                   <i className="inline-block h-2 w-2 rounded-full bg-success" /> Low {d.low_risk}
-                </span>
+                </Link>
               </div>
             </Card>
             <Card className="p-5">
               <h2 className="mb-3 font-semibold">Approval queue</h2>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
+              <div className="space-y-1 text-sm">
+                <Link href="/repository?status=pending" className="flex justify-between rounded px-2 py-1 hover:bg-elevated">
                   <span className="text-muted">Pending review</span>
                   <span className="font-medium">{d.pending_approval}</span>
-                </div>
-                <div className="flex justify-between">
+                </Link>
+                <Link href="/repository?status=approved" className="flex justify-between rounded px-2 py-1 hover:bg-elevated">
                   <span className="text-muted">Approved</span>
                   <span className="font-medium">{d.approved}</span>
-                </div>
+                </Link>
               </div>
             </Card>
           </div>

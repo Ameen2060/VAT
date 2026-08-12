@@ -14,6 +14,12 @@ export default function RepositoryPage() {
   const [status, setStatus] = useState("");
 
   useEffect(() => {
+    // Drill-down: pre-filter from ?risk= / ?status= (e.g. a dashboard tile click).
+    const p = new URLSearchParams(window.location.search);
+    const r = p.get("risk");
+    const s = p.get("status");
+    if (r) setRisk(r);
+    if (s) setStatus(s);
     api.listReviews().then(setReviews).catch((e) => setError(String(e.message ?? e)));
   }, []);
 
