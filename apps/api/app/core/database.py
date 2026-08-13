@@ -28,13 +28,15 @@ def _normalise_db_url(url: str) -> str:
 
 
 def _resolve_db_url() -> str:
-    """Pick the database URL. An explicit DATABASE_URL always wins; otherwise fall
-    back to the connection strings Vercel Postgres / Neon inject at deploy time. The
-    non-pooling URL is preferred on serverless — each short-lived invocation opens its
-    own connection rather than borrowing a paused one from a pgbouncer pool."""
-    if os.getenv("DATABASE_URL"):
-        return os.environ["DATABASE_URL"]
-    for env in ("POSTGRES_URL_NON_POOLING", "POSTGRES_URL", "POSTGRES_PRISMA_URL"):
+    """Pick the database URL from the vars managed hosts inject (Neon/Vercel Postgres
+    provide several). On serverless the non-pooling/direct URL is preferred: each
+    short-lived invocation opens its own connection instead of borrowing a paused one
+    from a pgbouncer pool, which avoids stale-connection and prepared-statement errors."""
+    if os.getenv("VERCEL"):
+        order = ("POSTGRES_URL_NON_POOLING", "DATABASE_URL_UNPOOLED", "DATABASE_URL", "POSTGRES_URL")
+    else:
+        order = ("DATABASE_URL", "POSTGRES_URL_NON_POOLING", "POSTGRES_URL", "POSTGRES_PRISMA_URL")
+    for env in order:
         val = os.getenv(env)
         if val:
             return val
@@ -59,11 +61,15 @@ if DATABASE_URL.startswith("sqlite"):
 engine_kwargs: dict = {"connect_args": connect_args, "future": True, "pool_pre_ping": True}
 # On a serverless host (Vercel) containers are frozen/thawed between requests, which
 # leaves pooled Postgres connections dead. NullPool opens a fresh connection per use
-# and closes it, avoiding "server closed the connection unexpectedly" errors.
+# and closes it, avoiding "server closed the connection unexpectedly" errors. We also
+# disable psycopg's server-side prepared statements: if the injected URL happens to be
+# a pgbouncer (transaction-pooling) endpoint, cached prepared statements collide across
+# connections ("prepared statement already exists").
 if DATABASE_URL.startswith("postgresql") and os.getenv("VERCEL"):
     from sqlalchemy.pool import NullPool
 
     engine_kwargs["poolclass"] = NullPool
+    connect_args["prepare_threshold"] = None
 
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
