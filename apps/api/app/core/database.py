@@ -49,7 +49,12 @@ if DATABASE_URL.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
     db_path = DATABASE_URL.replace("sqlite:///", "")
     if db_path and db_path != ":memory:":
-        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        # Serverless filesystems are read-only outside /tmp; never let dir creation
+        # crash import. Production uses Postgres, so this only matters in dev.
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+        except OSError:
+            pass
 
 engine_kwargs: dict = {"connect_args": connect_args, "future": True, "pool_pre_ping": True}
 # On a serverless host (Vercel) containers are frozen/thawed between requests, which

@@ -3,6 +3,12 @@ name = "vat-api"
 version = "0.1.0"
 description = "UAE VAT Compliance Platform — API and rule engine"
 requires-python = ">=3.11"
+# Runtime dependencies. These are what the Vercel Python builder installs (it reads
+# pyproject via uv), so the full serverless runtime set lives here — Postgres driver,
+# AI SDK, document parsing (PyMuPDF/openpyxl/docx/pypdf/pillow) and report generation.
+# The heavy OCR stack (rapidocr-onnxruntime/onnxruntime/opencv) stays in the optional
+# `parsing`/`all` extras below so it is EXCLUDED from the serverless bundle (too large);
+# scanned-image OCR is unavailable on Vercel, text-based PDFs still parse fully.
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -11,6 +17,14 @@ dependencies = [
     "sqlalchemy>=2.0",
     "python-multipart>=0.0.9",
     "pyjwt>=2.9",
+    "psycopg[binary]>=3.2",
+    "anthropic>=0.39",
+    "pypdf>=4.2",
+    "openpyxl>=3.1",
+    "python-docx>=1.1",
+    "pillow>=10.3",
+    "pymupdf>=1.24",
+    "reportlab>=4.2",
 ]
 
 [project.optional-dependencies]
