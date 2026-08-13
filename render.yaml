@@ -34,6 +34,8 @@ services:
           property: connectionString
       - key: API_CORS_ORIGINS
         value: https://vat-ameen.vercel.app
+      - key: APP_BASE_URL
+        value: https://vat-ameen.vercel.app
       - key: AI_PROVIDER
         value: anthropic
       - key: AI_MODEL
