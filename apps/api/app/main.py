@@ -33,9 +33,14 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     # Create tables, run additive migrations, seed admin + FTA data (idempotent).
+    # Never hard-fail startup: if the database is briefly unreachable, the app still
+    # serves /health and retries initialization on the next cold start / request.
     from .core.bootstrap import init_db
 
-    init_db()
+    try:
+        init_db()
+    except Exception:  # noqa: BLE001
+        pass
     yield
 
 
