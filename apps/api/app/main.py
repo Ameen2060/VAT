@@ -24,7 +24,6 @@ from .api.routes_review import router as review_router
 from .api.routes_vat201 import router as vat201_router
 from .auth.deps import get_current_user
 from .core.config import get_settings
-from .core.database import Base, engine
 from .vat.rules import review_invoice
 from .vat.schemas import Invoice, ReviewResult
 
@@ -33,44 +32,10 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    # Import models so they register on the metadata, then create tables.
-    # (Phase 3 will replace create_all with Alembic migrations.)
-    from . import models  # noqa: F401
-    from .core.database import ensure_columns
+    # Create tables, run additive migrations, seed admin + FTA data (idempotent).
+    from .core.bootstrap import init_db
 
-    Base.metadata.create_all(bind=engine)
-    # Additive migrations (preserve existing data) until Alembic lands in Phase 4.
-    ensure_columns(
-        "reviews",
-        {
-            "report_key": "VARCHAR(1024)",
-            "report_generated_at": "TIMESTAMP",
-            "is_read": "BOOLEAN DEFAULT FALSE",
-            "regime": "VARCHAR(8) DEFAULT 'vat'",
-        },
-    )
-    # Regime discriminator on documents (existing rows are all VAT).
-    ensure_columns("documents", {"regime": "VARCHAR(8) DEFAULT 'vat'"})
-    # VAT311 refund application stored on a VAT201 return.
-    ensure_columns("vat201_returns", {"refund311_json": "TEXT"})
-    # Soft-delete columns on the archive (existing rows default to not-deleted).
-    ensure_columns("archive_files", {"deleted_at": "TIMESTAMP", "deleted_by": "VARCHAR(255)"})
-    # SME-validation gate on effective-dated rules.
-    ensure_columns("vat_rule_versions", {"requires_validation": "BOOLEAN DEFAULT FALSE"})
-    # Seed the first admin from configured credentials (no-op if users already exist).
-    from .auth.service import bootstrap_admin
-    from .core.database import SessionLocal
-    from .fta.seed import seed_fta
-
-    with SessionLocal() as db:
-        bootstrap_admin(db, settings.admin_email, settings.admin_password)
-        # Seed official FTA sources + effective-dated rules on first boot (idempotent).
-        try:
-            seed_fta(db)
-        except Exception:
-            # Seeding is best-effort; a monitored source being unreachable at
-            # boot must never block the app from starting.
-            pass
+    init_db()
     yield
 
 

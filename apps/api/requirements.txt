@@ -1,0 +1,19 @@
+# Slim dependency set for the Vercel serverless deployment.
+# Excludes the heavy OCR stack (rapidocr-onnxruntime / onnxruntime / opencv) which
+# exceeds the serverless size limit — scanned-image OCR is unavailable on Vercel,
+# but text-based PDFs, DOCX, XLSX and CSV are parsed fully. Also excludes uvicorn
+# (Vercel provides the ASGI server) and boto3/openai (only used by unselected backends).
+fastapi>=0.115
+pydantic>=2.7
+pydantic-settings>=2.3
+sqlalchemy>=2.0
+python-multipart>=0.0.9
+pyjwt>=2.9
+psycopg[binary]>=3.2
+anthropic>=0.39
+pypdf>=4.2
+openpyxl>=3.1
+python-docx>=1.1
+pillow>=10.3
+pymupdf>=1.24
+reportlab>=4.2

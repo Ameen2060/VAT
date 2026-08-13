@@ -27,7 +27,21 @@ def _normalise_db_url(url: str) -> str:
     return url
 
 
-DATABASE_URL = _normalise_db_url(settings.database_url)
+def _resolve_db_url() -> str:
+    """Pick the database URL. An explicit DATABASE_URL always wins; otherwise fall
+    back to the connection strings Vercel Postgres / Neon inject at deploy time. The
+    non-pooling URL is preferred on serverless — each short-lived invocation opens its
+    own connection rather than borrowing a paused one from a pgbouncer pool."""
+    if os.getenv("DATABASE_URL"):
+        return os.environ["DATABASE_URL"]
+    for env in ("POSTGRES_URL_NON_POOLING", "POSTGRES_URL", "POSTGRES_PRISMA_URL"):
+        val = os.getenv(env)
+        if val:
+            return val
+    return settings.database_url
+
+
+DATABASE_URL = _normalise_db_url(_resolve_db_url())
 
 # SQLite needs a flag for multi-threaded FastAPI; ensure the data dir exists.
 connect_args: dict = {}
@@ -37,9 +51,16 @@ if DATABASE_URL.startswith("sqlite"):
     if db_path and db_path != ":memory:":
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
 
-engine = create_engine(
-    DATABASE_URL, connect_args=connect_args, future=True, pool_pre_ping=True
-)
+engine_kwargs: dict = {"connect_args": connect_args, "future": True, "pool_pre_ping": True}
+# On a serverless host (Vercel) containers are frozen/thawed between requests, which
+# leaves pooled Postgres connections dead. NullPool opens a fresh connection per use
+# and closes it, avoiding "server closed the connection unexpectedly" errors.
+if DATABASE_URL.startswith("postgresql") and os.getenv("VERCEL"):
+    from sqlalchemy.pool import NullPool
+
+    engine_kwargs["poolclass"] = NullPool
+
+engine = create_engine(DATABASE_URL, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 

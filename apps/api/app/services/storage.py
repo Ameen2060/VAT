@@ -67,7 +67,83 @@ class S3Storage:
         self._client.delete_object(Bucket=self._bucket, Key=key)
 
 
+class VercelBlobStorage:
+    """Persistent object storage on Vercel Blob (serverless has no writable disk).
+
+    Uses the documented Blob REST API over stdlib urllib — no extra dependency and no
+    SDK. The returned public URL (with an unguessable random suffix) is stored as the
+    key; files are only ever streamed back to users through authenticated API routes,
+    so the URL itself is never exposed in the UI.
+    """
+
+    backend = "blob"
+    _API = "https://blob.vercel-storage.com"
+    _API_VERSION = "7"
+
+    def __init__(self) -> None:
+        self._token = os.getenv("BLOB_READ_WRITE_TOKEN", "")
+        if not self._token:
+            raise RuntimeError("BLOB_READ_WRITE_TOKEN is not set (Vercel Blob store not connected).")
+
+    @staticmethod
+    def _safe(name: str) -> str:
+        base = os.path.basename(name) or "file"
+        return "".join(c if (c.isalnum() or c in "._-") else "_" for c in base)[:120]
+
+    def save(self, filename: str, data: bytes) -> str:
+        import json
+        import urllib.request
+
+        pathname = f"{uuid.uuid4().hex}_{self._safe(filename)}"
+        req = urllib.request.Request(
+            f"{self._API}/{pathname}",
+            data=data,
+            method="PUT",
+            headers={
+                "authorization": f"Bearer {self._token}",
+                "x-api-version": self._API_VERSION,
+                "x-add-random-suffix": "1",
+                "content-type": "application/octet-stream",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        url = payload.get("url")
+        if not url:
+            raise RuntimeError("Vercel Blob upload returned no URL.")
+        return url
+
+    def read(self, key: str) -> bytes:
+        import urllib.request
+
+        # Keys are full blob URLs; fetch directly.
+        with urllib.request.urlopen(key, timeout=30) as resp:
+            return resp.read()
+
+    def delete(self, key: str) -> None:
+        import json
+        import urllib.request
+
+        body = json.dumps({"urls": [key]}).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self._API}/delete",
+            data=body,
+            method="POST",
+            headers={
+                "authorization": f"Bearer {self._token}",
+                "x-api-version": self._API_VERSION,
+                "content-type": "application/json",
+            },
+        )
+        try:
+            urllib.request.urlopen(req, timeout=30).read()
+        except Exception:  # noqa: BLE001 — a failed delete must not break the request
+            pass
+
+
 def get_storage():
+    if settings.storage_backend == "blob":
+        return VercelBlobStorage()
     if settings.storage_backend == "s3":
         return S3Storage()
     return LocalStorage(settings.local_storage_dir)
