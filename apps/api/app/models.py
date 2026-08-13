@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .compliance.domain import Regime
@@ -23,6 +23,20 @@ def _uuid() -> str:
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class StoredBlob(Base):
+    """Binary object storage backed by the database, used when no external object
+    store (Vercel Blob / S3) is configured. Keeps uploaded documents and generated
+    reports persistent on serverless hosts that have no writable disk, needing only
+    the database to be connected."""
+
+    __tablename__ = "stored_blobs"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True, default=_uuid)
+    filename: Mapped[str] = mapped_column(String(255), default="file")
+    content: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
 class User(Base):

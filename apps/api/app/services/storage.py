@@ -116,6 +116,9 @@ class VercelBlobStorage:
     def read(self, key: str) -> bytes:
         import urllib.request
 
+        # Tolerate keys written by the DB backend before Blob was connected.
+        if key.startswith("db:"):
+            return DbStorage().read(key)
         # Keys are full blob URLs; fetch directly.
         with urllib.request.urlopen(key, timeout=30) as resp:
             return resp.read()
@@ -141,9 +144,69 @@ class VercelBlobStorage:
             pass
 
 
+class DbStorage:
+    """Persist blobs in the database (StoredBlob table). Zero extra infrastructure:
+    works anywhere the app's database works, including serverless hosts with no disk.
+    Suitable for documents/reports of typical size; for very large files or high
+    volume, attach Vercel Blob / S3 instead."""
+
+    backend = "db"
+
+    def save(self, filename: str, data: bytes) -> str:
+        from ..models import StoredBlob
+        from ..core.database import SessionLocal
+
+        key = f"db:{uuid.uuid4().hex}"
+        with SessionLocal() as db:
+            db.add(StoredBlob(key=key, filename=os.path.basename(filename or "file"), content=data))
+            db.commit()
+        return key
+
+    def read(self, key: str) -> bytes:
+        # Tolerate keys written by the Blob backend (public URLs) if the store changed.
+        if key.startswith(("http://", "https://")):
+            import urllib.request
+
+            with urllib.request.urlopen(key, timeout=30) as resp:
+                return resp.read()
+
+        from ..models import StoredBlob
+        from ..core.database import SessionLocal
+
+        with SessionLocal() as db:
+            row = db.get(StoredBlob, key)
+            if row is None:
+                raise FileNotFoundError(key)
+            return row.content
+
+    def delete(self, key: str) -> None:
+        from ..models import StoredBlob
+        from ..core.database import SessionLocal
+
+        with SessionLocal() as db:
+            row = db.get(StoredBlob, key)
+            if row is not None:
+                db.delete(row)
+                db.commit()
+
+
 def get_storage():
-    if settings.storage_backend == "blob":
-        return VercelBlobStorage()
-    if settings.storage_backend == "s3":
+    """Choose a storage backend. Order of preference:
+    - Vercel Blob when a token is configured (best for large files / scale);
+    - the database (StoredBlob) as a persistent fallback that needs no extra store —
+      so attaching just Postgres is enough for uploads to work and persist;
+    - S3 when explicitly selected;
+    - the local disk for local development.
+    """
+    backend = settings.storage_backend
+    if backend == "blob":
+        if os.getenv("BLOB_READ_WRITE_TOKEN"):
+            return VercelBlobStorage()
+        # Blob selected but not connected yet — fall back to durable DB storage
+        # instead of failing, so uploads persist as long as the database is attached.
+        return DbStorage()
+    if backend == "db":
+        return DbStorage()
+    if backend == "s3":
         return S3Storage()
     return LocalStorage(settings.local_storage_dir)
