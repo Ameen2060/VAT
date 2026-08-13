@@ -45,7 +45,7 @@ async def lifespan(_: FastAPI):
         {
             "report_key": "VARCHAR(1024)",
             "report_generated_at": "TIMESTAMP",
-            "is_read": "BOOLEAN DEFAULT 0",
+            "is_read": "BOOLEAN DEFAULT FALSE",
             "regime": "VARCHAR(8) DEFAULT 'vat'",
         },
     )
@@ -56,13 +56,21 @@ async def lifespan(_: FastAPI):
     # Soft-delete columns on the archive (existing rows default to not-deleted).
     ensure_columns("archive_files", {"deleted_at": "TIMESTAMP", "deleted_by": "VARCHAR(255)"})
     # SME-validation gate on effective-dated rules.
-    ensure_columns("vat_rule_versions", {"requires_validation": "BOOLEAN DEFAULT 0"})
+    ensure_columns("vat_rule_versions", {"requires_validation": "BOOLEAN DEFAULT FALSE"})
     # Seed the first admin from configured credentials (no-op if users already exist).
     from .auth.service import bootstrap_admin
     from .core.database import SessionLocal
+    from .fta.seed import seed_fta
 
     with SessionLocal() as db:
         bootstrap_admin(db, settings.admin_email, settings.admin_password)
+        # Seed official FTA sources + effective-dated rules on first boot (idempotent).
+        try:
+            seed_fta(db)
+        except Exception:
+            # Seeding is best-effort; a monitored source being unreachable at
+            # boot must never block the app from starting.
+            pass
     yield
 
 
