@@ -1,86 +1,109 @@
 # Deployment Guide — Vercel (frontend) + Render (backend)
 
-The app is two deployables:
+Production topology. Nothing runs on a developer machine, a tunnel, or a local
+terminal — the two hosts below run permanently and restart themselves.
 
-| Piece | Host | URL (target) |
-|-------|------|--------------|
-| Next.js dashboard (`apps/web`) | **Vercel** | `https://keturah-vat.vercel.app` |
-| FastAPI API + OCR (`apps/api`) | **Render** (Docker) | `https://keturah-vat-api.onrender.com` |
-| PostgreSQL | Render managed DB | (internal) |
-| Uploaded files + PDF reports | Render persistent disk `/var/data` | (internal) |
+| Piece | Host | URL |
+|-------|------|-----|
+| Next.js dashboard (`apps/web`) | **Vercel** | `https://vat-ameen.vercel.app` |
+| FastAPI API + OCR (`apps/api`) | **Render** (Docker) | `https://vat-ameen-api.onrender.com` |
+| PostgreSQL | Render managed DB (`vat-ameen-db`) | internal connection string |
+| Uploaded files + generated reports | Render persistent disk at `/var/data` | internal |
+| Daily FTA source monitor | Render cron (`vat-ameen-fta-monitor`) | 06:00 UTC |
 
-> The backend can't run on Vercel — it needs OCR models, PyMuPDF, and a persistent
-> filesystem/DB, which serverless doesn't provide. That's why it lives on Render.
+Repository: **`github.com/Ameen2060/VAT`**, default branch `main`.
 
-> ⚠️ **Security note:** authentication/RBAC is not finished yet. Once this is on a
-> public URL, anyone with the link can upload and read invoices. For real client
-> data, finish Phase 4 (login) before sharing the URL, or keep it private.
+## How the frontend reaches the backend (important)
+
+The browser only ever calls **`vat-ameen.vercel.app/api/*`** — same origin. Next.js
+rewrites those requests **server-side** to the Render backend (see
+[`apps/web/next.config.mjs`](../apps/web/next.config.mjs)). Consequences:
+
+- **No CORS** is exercised by the browser (calls are same-origin).
+- The client bundle contains **no backend hostname** — `lib/api.ts` uses relative
+  `/api/...` paths (`API_BASE` defaults to `""`).
+- The backend URL lives in exactly one place: the Vercel env var **`BACKEND_ORIGIN`**,
+  which is baked into the routes manifest at **build time**. Changing the backend =
+  update `BACKEND_ORIGIN` for all environments **and redeploy** (a rebuild).
 
 ---
 
-## 1 — Push the repo to GitHub
+## 1 — GitHub (done)
 
-Both Render and Vercel deploy from a Git repo.
+Code is on `github.com/Ameen2060/VAT` (`main`). Both hosts deploy from it.
+
+## 2 — Backend on Render (Blueprint)
+
+1. Render Dashboard → **New → Blueprint** → connect **`Ameen2060/VAT`**.
+2. Render reads [`render.yaml`](../render.yaml) and proposes:
+   - web service **`vat-ameen-api`** (Docker, `apps/api/Dockerfile`, Starter plan) with a
+     1 GB persistent disk at `/var/data`, health check `/health`, auto-deploy on push.
+   - PostgreSQL **`vat-ameen-db`**.
+   - cron **`vat-ameen-fta-monitor`** (daily FTA source check).
+3. Fill the three secret env vars it prompts for (see table below), then **Apply**.
+   First build takes ~5–8 min (installs OCR + Postgres deps).
+4. When live, copy the service URL (e.g. `https://vat-ameen-api.onrender.com`) and verify
+   `…/health` returns `{"status":"ok"}`.
+
+### Backend environment variables
+
+Non-secret values are set automatically by `render.yaml`. Secrets (marked 🔒) are entered
+in the Render dashboard and are never committed or printed.
+
+| Variable | Set by | Value / meaning |
+|----------|--------|-----------------|
+| `DATABASE_URL` | blueprint (fromDatabase) | Postgres connection string; app normalizes `postgres://` → `postgresql+psycopg://` |
+| `SECRET_KEY` | blueprint (generateValue) | JWT signing key, auto-generated |
+| `APP_ENV` | blueprint | `production` |
+| `STORAGE_BACKEND` | blueprint | `local` (persistent disk) |
+| `LOCAL_STORAGE_DIR` | blueprint | `/var/data/storage` (on the disk) |
+| `API_CORS_ORIGINS` | blueprint | `https://vat-ameen.vercel.app` |
+| `APP_BASE_URL` | blueprint | `https://vat-ameen.vercel.app` (password-reset links) |
+| `AI_PROVIDER` | blueprint | `anthropic` |
+| `AI_MODEL` | blueprint | `claude-sonnet-5` |
+| `ANTHROPIC_API_KEY` 🔒 | **you** | your Anthropic API key (app still runs without it via the deterministic engine) |
+| `ADMIN_EMAIL` 🔒 | **you** | first-admin login email (bootstrapped on first boot) |
+| `ADMIN_PASSWORD` 🔒 | **you** | first-admin password (8+ chars, upper + lower + digit) |
+
+On first boot the backend creates all tables, seeds the official FTA sources + rules,
+and bootstraps the admin user from `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+
+## 3 — Point Vercel at the backend and redeploy
+
+Once the Render URL exists, set it for **all three** environments and rebuild:
 
 ```bash
-cd <this folder>
-git init && git add . && git commit -m "VAT compliance platform"
-gh repo create keturah-vat --private --source . --push   # or create it on github.com
+cd apps/web
+# for each of production / preview / development:
+vercel env rm  BACKEND_ORIGIN <env> -y
+echo "https://vat-ameen-api.onrender.com" | vercel env add BACKEND_ORIGIN <env>
+vercel --prod
 ```
 
-## 2 — Backend on Render (from the blueprint)
+`BACKEND_ORIGIN` is the **only** Vercel env var this app needs. Do **not** set
+`NEXT_PUBLIC_API_BASE` — the same-origin proxy design relies on it being empty.
 
-1. Render Dashboard → **New → Blueprint** → connect the GitHub repo.
-2. Render reads [`render.yaml`](../render.yaml) and proposes:
-   - web service **keturah-vat-api** (Docker, `apps/api/Dockerfile`) with a 1 GB disk at `/var/data`
-   - PostgreSQL **keturah-vat-db**
-3. Click **Apply**. First build takes a few minutes (installs OCR deps).
-4. When live, note the URL, e.g. `https://keturah-vat-api.onrender.com`.
-5. **Set the AI key:** service → **Environment** → add `ANTHROPIC_API_KEY` = your key → save (redeploys). Without it, the app still runs (deterministic engine + offline analysis); with it, you get full Claude analysis.
-6. **Seed the knowledge base once:**
-   ```bash
-   curl -X POST https://keturah-vat-api.onrender.com/api/knowledge/seed
-   ```
-7. Verify: open `https://keturah-vat-api.onrender.com/health` → `{"status":"ok"}` and `/api/ai/status`.
+## 4 — Smoke test (production, from a fresh browser)
 
-**Free-tier variant (no disk):** remove the `disk:` block and set `plan: free` in
-`render.yaml`, then set `STORAGE_BACKEND=s3` with `S3_ENDPOINT_URL / S3_ACCESS_KEY /
-S3_SECRET_KEY / S3_BUCKET` (AWS S3 or Cloudflare R2). Files then persist in object
-storage instead of the disk.
-
-## 3 — Frontend on Vercel
-
-1. Vercel → **Add New → Project** → import the same repo.
-2. **Root Directory: `apps/web`** (important — it's a monorepo). Framework auto-detects as Next.js.
-3. **Environment Variables** → add:
-   | Name | Value |
-   |------|-------|
-   | `NEXT_PUBLIC_API_BASE` | `https://keturah-vat-api.onrender.com` |
-4. **Project name `keturah-vat`** → gives `https://keturah-vat.vercel.app` (if the name is free).
-5. Deploy.
-
-## 4 — Connect the two (CORS)
-
-The backend only accepts browser calls from allow-listed origins. `render.yaml` already
-sets `API_CORS_ORIGINS=https://keturah-vat.vercel.app`. If your Vercel URL differs,
-update that env var on Render (comma-separate multiple origins) and redeploy.
-
-## 5 — Smoke test
-
-1. Open `https://keturah-vat.vercel.app`.
-2. Go to **Document Analysis**, upload an invoice → confirm extraction, verification
-   items, validation checks, and the compliance verdict appear.
-3. Generate a PDF report and download it.
+1. Open `https://vat-ameen.vercel.app` → log in with the admin credentials.
+2. Dashboard loads with live KPIs (proves frontend → Vercel proxy → Render → Postgres).
+3. **Document Analysis** → upload an invoice → extraction + compliance verdict appear
+   (proves upload + persistent disk + AI/deterministic engine).
+4. Download a PDF report and an Excel export.
+5. In Render, **Manual Deploy → Restart** the service, wait, refresh the site → the same
+   data is still present (proves Postgres + disk persistence across restart).
 
 ---
 
-## Notes & limitations
+## Notes
 
-- **DB migrations:** the app creates tables on startup (`create_all`) plus a small
-  additive column migration. For ongoing schema changes, add Alembic (Phase 4).
-- **Cold starts:** Render Starter keeps the service warm; the free plan sleeps after
-  inactivity (first request is slow).
-- **Secrets:** never commit real keys. `ANTHROPIC_API_KEY` and `SECRET_KEY` are set in
-  the Render dashboard (the blueprint marks them secret / auto-generated).
-- **Custom domain:** to use your own domain later, add it in Vercel (frontend) and set
-  `API_CORS_ORIGINS` on Render to match.
+- **Always-on:** the Starter plan keeps `vat-ameen-api` warm and auto-restarts on crash;
+  the persistent disk survives restarts and redeploys. Auto-deploy ships every push to
+  `main`.
+- **Free-tier variant (no disk):** remove the `disk:` block and set `plan: free`, then set
+  `STORAGE_BACKEND=s3` with S3/R2 credentials so files persist in object storage. The free
+  web plan sleeps after inactivity (slow first request) — not recommended for "always-on".
+- **DB schema:** created on startup (`create_all`) plus additive column migrations
+  (`ensure_columns`). Boolean defaults use `DEFAULT FALSE` for Postgres compatibility.
+- **Secrets:** never commit real keys. `ANTHROPIC_API_KEY` and the admin credentials are
+  entered only in the Render dashboard; `SECRET_KEY` is auto-generated by Render.
