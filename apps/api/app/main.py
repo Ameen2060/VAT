@@ -9,8 +9,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
 
 from . import __version__
 from .api.routes_ai import router as ai_router
@@ -62,6 +64,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(OperationalError)
+async def _database_unavailable(_: Request, __: OperationalError) -> JSONResponse:
+    """Return a clear 503 (not a raw 500) when the database can't be reached — e.g.
+    the managed Postgres isn't attached yet, or is briefly restarting. The frontend
+    maps 503 to a friendly 'temporarily unavailable — retry' message."""
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": (
+                "The service database is not reachable. It may still be connecting or "
+                "restarting — please retry in a moment."
+            )
+        },
+    )
+
 
 # Auth endpoints are public; everything else requires a valid session (when
 # AUTH_ENABLED — the default). With auth disabled (tests/dev) the guard passes through.
