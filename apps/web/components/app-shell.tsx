@@ -33,6 +33,8 @@ function Icon({ name }: { name: string }) {
     moon: "M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z",
     gear: "M12 15a3 3 0 100-6 3 3 0 000 6zM19.4 13a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z",
     archive: "M3 4h18v4H3zM5 8v12h14V8M9 12h6",
+    menu: "M3 6h18M3 12h18M3 18h18",
+    close: "M18 6L6 18M6 6l12 12",
     bell: "M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0",
     users: "M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2M9 11a4 4 0 100-8 4 4 0 000 8M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75",
   };
@@ -50,8 +52,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { theme, toggle } = useTheme();
   const [ai, setAi] = useState<AiStatus | null>(null);
   const [ready, setReady] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const isPublic = pathname === "/login" || pathname === "/reset-password";
+
+  // Close the mobile nav drawer whenever the route changes.
+  useEffect(() => setMobileOpen(false), [pathname]);
 
   // Auth gate: unauthenticated users are sent to /login (client-side).
   useEffect(() => {
@@ -83,16 +89,38 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      {/* Sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r border-border bg-surface md:flex">
-        <div className="flex items-center gap-2 px-5 py-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-brand-fg font-bold">
-            V
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/50 md:hidden"
+          onClick={() => setMobileOpen(false)}
+          aria-hidden
+        />
+      )}
+
+      {/* Sidebar — static on desktop, slide-in drawer on mobile */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex w-64 shrink-0 flex-col overflow-y-auto border-r border-border bg-surface transition-transform duration-200 md:static md:z-auto md:translate-x-0 ${
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
+      >
+        <div className="flex items-center justify-between px-5 py-5">
+          <div className="flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-brand-fg font-bold">
+              V
+            </div>
+            <div className="leading-tight">
+              <div className="font-semibold">VAT Compliance</div>
+              <div className="text-xs text-muted">UAE · FTA</div>
+            </div>
           </div>
-          <div className="leading-tight">
-            <div className="font-semibold">VAT Compliance</div>
-            <div className="text-xs text-muted">UAE · FTA</div>
-          </div>
+          <button
+            onClick={() => setMobileOpen(false)}
+            aria-label="Close menu"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted hover:text-fg md:hidden"
+          >
+            <Icon name="close" />
+          </button>
         </div>
         <nav className="flex-1 space-y-1 px-3 py-2">
           {NAV.filter((item) => !item.adminOnly || user?.role === "admin").map((item) => {
@@ -120,9 +148,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-surface/80 px-6 py-3 backdrop-blur">
-          <div className="text-sm text-muted">UAE VAT Compliance Platform</div>
-          <div className="flex items-center gap-3">
+        <header className="sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-border bg-surface/80 px-3 py-3 backdrop-blur sm:px-6">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              onClick={() => setMobileOpen(true)}
+              aria-label="Open menu"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted hover:text-fg md:hidden"
+            >
+              <Icon name="menu" />
+            </button>
+            <div className="truncate text-sm text-muted">UAE VAT Compliance Platform</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
             {ai && (
               <span
                 title={ai.message}
@@ -169,7 +206,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             )}
           </div>
         </header>
-        <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-6">{children}</main>
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-5 sm:px-6 sm:py-6">{children}</main>
       </div>
     </div>
   );

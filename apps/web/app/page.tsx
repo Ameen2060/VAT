@@ -112,19 +112,36 @@ export default function DashboardPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ReviewSummary | null>(null);
 
-  const refresh = useCallback(async () => {
+  const [loading, setLoading] = useState(true);
+  const [reconnecting, setReconnecting] = useState(false);
+
+  // Auto-reconnect: a cold/waking backend is retried a few times with backoff before
+  // we surface an error. The Retry button calls refresh(0) to try again on demand.
+  const refresh = useCallback(async (attempt = 0) => {
     try {
       const [summary, list] = await Promise.all([api.dashboard(), api.listReviews()]);
       setD(summary);
       setReviews(list);
       setError(null);
+      setReconnecting(false);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : String(e);
+      const transient = /temporarily unavailable|Failed to fetch|NetworkError/i.test(msg);
+      if (transient && attempt < 4) {
+        setReconnecting(true);
+        setError(null);
+        setTimeout(() => refresh(attempt + 1), 1500 * (attempt + 1));
+        return;
+      }
+      setReconnecting(false);
+      setError(msg);
+    } finally {
+      if (attempt === 0) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    refresh();
+    refresh(0);
   }, [refresh]);
 
   const changeStatus = async (id: string, status: ReviewStatus) => {
@@ -168,25 +185,40 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6 animate-in">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">Compliance Overview</h1>
           <p className="text-sm text-muted">Your UAE VAT compliance at a glance.</p>
         </div>
         <Link
           href="/analyze"
-          className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-fg hover:opacity-90"
+          className="shrink-0 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-fg hover:opacity-90"
         >
           + Review invoice
         </Link>
       </div>
 
+      {reconnecting && (
+        <Card className="flex items-center gap-2 p-4 text-sm text-muted">
+          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted border-t-transparent" />
+          Connecting to the server…
+        </Card>
+      )}
+
+      {loading && !d && !error && !reconnecting && (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-[92px] animate-pulse rounded-xl border border-border bg-elevated/40" />
+          ))}
+        </div>
+      )}
+
       {error && (
         <Card className="border-warning/40 bg-warning/5 p-4 text-sm text-warning">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <span>⚠️ {error}</span>
             <button
-              onClick={() => refresh()}
+              onClick={() => { setLoading(true); refresh(0); }}
               className="shrink-0 rounded-lg border border-warning/40 px-3 py-1 text-xs font-medium hover:bg-warning/10"
             >
               Retry
