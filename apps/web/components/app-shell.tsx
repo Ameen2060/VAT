@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import { clearSession, getUser, isAuthenticated } from "@/lib/auth";
 import type { AiStatus } from "@/lib/types";
 import { useTheme } from "./theme-provider";
+import { InstallButton } from "./pwa";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: "grid" },
@@ -79,7 +80,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // Public auth pages render without the app chrome.
   if (isPublic) return <>{children}</>;
-  if (!ready) return null;
+  // Branded boot splash — shown briefly while the session/auth gate resolves. Gives
+  // the installed app a native launch feel instead of a blank flash.
+  if (!ready) {
+    return (
+      <div className="flex min-h-[100dvh] flex-col items-center justify-center gap-4 bg-bg">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-brand text-2xl font-bold text-brand-fg shadow-lg">
+          V
+        </div>
+        <div className="text-sm font-medium text-muted">VAT Compliance</div>
+        <div className="h-1.5 w-24 overflow-hidden rounded-full bg-elevated">
+          <div className="h-full w-1/2 animate-pulse rounded-full bg-brand" />
+        </div>
+      </div>
+    );
+  }
 
   const user = getUser();
   const logout = () => {
@@ -141,14 +156,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <div className="border-t border-border px-4 py-3 text-xs text-muted">
-          Grounded in Federal Decree-Law No. 8 of 2017
+        <div className="space-y-3 border-t border-border px-4 py-3 pb-safe">
+          <InstallButton className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-sm font-semibold text-brand-fg hover:opacity-90" />
+          <div className="text-xs text-muted">Grounded in Federal Decree-Law No. 8 of 2017</div>
         </div>
       </aside>
 
       {/* Main */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-border bg-surface/80 px-3 py-3 backdrop-blur sm:px-6">
+        <header className="pt-safe sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-border bg-surface/80 px-3 pb-3 backdrop-blur sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
             <button
               onClick={() => setMobileOpen(true)}
@@ -160,6 +176,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="truncate text-sm text-muted">UAE VAT Compliance Platform</div>
           </div>
           <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+            <InstallButton />
             {ai && (
               <span
                 title={ai.message}

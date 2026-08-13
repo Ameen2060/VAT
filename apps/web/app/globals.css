@@ -2,6 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---- PWA / mobile ergonomics ---- */
+@layer utilities {
+  /* Honour device safe areas (notches, home indicators) in standalone mode. */
+  .pt-safe { padding-top: max(0.75rem, env(safe-area-inset-top)); }
+  .pb-safe { padding-bottom: max(0.75rem, env(safe-area-inset-bottom)); }
+  .pl-safe { padding-left: env(safe-area-inset-left); }
+  .pr-safe { padding-right: env(safe-area-inset-right); }
+}
+
+/* Comfortable, non-janky touch behaviour on phones/tablets. */
+@media (pointer: coarse) {
+  /* Give interactive controls a minimum 44px touch target (Apple/WCAG guidance). */
+  button, a[role="button"], [type="button"], [type="submit"],
+  input:not([type="checkbox"]):not([type="radio"]), select, textarea {
+    min-height: 44px;
+  }
+}
+html { -webkit-text-size-adjust: 100%; }
+/* Remove the grey tap flash; we provide our own active states. */
+* { -webkit-tap-highlight-color: transparent; }
+/* Let long tables/code scroll horizontally with momentum instead of breaking layout. */
+.overflow-x-auto { -webkit-overflow-scrolling: touch; }
+
 :root {
   --bg: 247 248 250;
   --surface: 255 255 255;
