@@ -70,14 +70,19 @@ async def generate(
             filter_by_date=filter_by_date, default_emirate=default_emirate,
         )
     except ValueError as exc:
-        # Bad/unsupported file content — a clear 400, never a 500.
+        # Bad/unsupported file content — a clear, specific 400, never a 500.
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 — any parsing failure is the file's fault
+    except Exception as exc:  # noqa: BLE001
+        # Unexpected: log the real traceback so it's diagnosable, return a clean 400.
+        import traceback
+
+        print("VAT201 generate failed:\n" + traceback.format_exc())  # captured by the host logs
         raise HTTPException(
             status_code=400,
             detail=(
-                "Could not process the transactions file. Please upload a valid .csv or "
-                ".xlsx with a header row (Date, Type, Amount, VAT, …)."
+                "Could not process the transactions file "
+                f"({type(exc).__name__}). Please upload a valid .csv or .xlsx with a header "
+                "row (Date, Type, Taxable Amount, VAT Amount, …)."
             ),
         ) from exc
     # Archive the source transactions file, linked to the generated return.

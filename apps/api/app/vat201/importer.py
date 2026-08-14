@@ -50,6 +50,28 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
+def _clean_id(v) -> str | None:
+    """Return an identifier (TRN / invoice number) as its full text. Excel stores long
+    digit strings as floats and shows them in scientific notation (e.g. a 15-digit TRN
+    becomes '1.00047E+14'); recover the full integer digits so the TRN isn't corrupted."""
+    if v is None:
+        return None
+    if isinstance(v, float):
+        return format(int(v), "d") if v.is_integer() else repr(v)
+    if isinstance(v, int):
+        return str(v)
+    s = str(v).strip()
+    if not s:
+        return None
+    # A scientific-notation string like "1.00047E+14" or "1,00047E+14".
+    if re.fullmatch(r"[+-]?\d[\d,]*\.?\d*\s*[eE]\s*[+-]?\d+", s):
+        try:
+            return format(int(float(s.replace(",", ""))), "d")
+        except (ValueError, OverflowError):
+            return s
+    return s
+
+
 def _to_decimal(v) -> Decimal:
     if v is None:
         return Decimal(0)
@@ -205,7 +227,18 @@ def _sheets_from_bytes(filename: str, data: bytes) -> list[tuple[str, list[dict]
         )
 
     # Everything else (real .csv, or a .xlsx that is actually CSV text) → parse as CSV.
+    if b"\x00" in data[:4096]:  # NUL bytes ⇒ binary, not text/CSV
+        raise ValueError(
+            "This file isn't a readable CSV or Excel workbook. Open it in Excel and use "
+            "File → Save As → Excel Workbook (.xlsx) or CSV (.csv), then upload again."
+        )
     text = data.decode("utf-8-sig", errors="replace")
+    # A high ratio of replacement characters also means it wasn't really text.
+    if text and text.count("�") > max(20, len(text) // 20):
+        raise ValueError(
+            "This file isn't a readable CSV or Excel workbook. Re-save it as .xlsx or .csv "
+            "and upload again."
+        )
     return [("", list(csv.DictReader(io.StringIO(text))))]
 
 
@@ -236,11 +269,15 @@ def parse_transactions(
     sheets = _sheets_from_bytes(filename, data)
     txns: list[Transaction] = []
     last_map: dict[str, str] = {}
+    all_headers: list[str] = []
+    total_rows = 0
 
     for sheet_name, rows in sheets:
         if not rows:
             continue
-        m = _map_columns(list(rows[0].keys()))
+        total_rows += len(rows)
+        all_headers = list(rows[0].keys())
+        m = _map_columns(all_headers)
         last_map = m or last_map
         sheet_dir, sheet_treat = _sheet_defaults(sheet_name)
         # When the file identifies transactions by invoice/party, a row missing BOTH is
@@ -269,8 +306,19 @@ def parse_transactions(
             if emirate == Emirate.UNALLOCATED and default_emirate is not None:
                 emirate = default_emirate
             taxable = _to_decimal(cell(row, "taxable_amount"))
-            invoice_no = str(cell(row, "invoice_number") or "") or None
+            invoice_no = _clean_id(cell(row, "invoice_number"))
             party = str(cell(row, "party") or "") or None
+
+            # Credit notes reduce the VAT figures they relate to: negate the amounts so
+            # the box aggregation SUBTRACTS them (a sales credit note lowers output VAT in
+            # Box 1; a purchase/supplier credit note lowers input VAT in Box 9). Debit
+            # notes keep their normal (positive) sign.
+            _ttype = _norm(f"{doc_type or ''} {cell(row, 'treatment') or ''}")
+            if any(k in _ttype for k in ("creditnote", "creditmemo", "salesreturn", "salesreturns")):
+                if taxable is not None:
+                    taxable = -abs(taxable)
+                if vat is not None:
+                    vat = -abs(vat)
 
             # Skip totals / subtotal / empty rows.
             row_text = " ".join(str(v) for v in row.values() if v is not None).lower()
@@ -288,8 +336,8 @@ def parse_transactions(
                     doc_type=doc_type or (sheet_name or None),
                     direction=direction,
                     party=str(cell(row, "party") or "") or None,
-                    trn=str(cell(row, "trn") or "") or None,
-                    invoice_number=str(cell(row, "invoice_number") or "") or None,
+                    trn=_clean_id(cell(row, "trn")),
+                    invoice_number=invoice_no,
                     emirate=emirate,
                     treatment=treatment,
                     vat_rate=rate,
@@ -298,4 +346,17 @@ def parse_transactions(
                     raw={"_sheet": sheet_name, **{k: (str(v) if v is not None else "") for k, v in row.items()}},
                 )
             )
+
+    # Diagnostic: if the file had rows but we couldn't recognise the essential columns,
+    # tell the user exactly which headers we saw and what we expect — much more useful
+    # than a generic "could not process" message.
+    essential = {"taxable_amount", "vat_amount", "date", "direction", "doc_type"}
+    if total_rows > 0 and not (set(last_map) & essential):
+        found = ", ".join(str(h) for h in all_headers[:12] if h) or "(none)"
+        raise ValueError(
+            "Couldn't recognise the transaction columns in this file. "
+            f"Columns found: {found}. Expected a header row with at least a Date and an "
+            "amount column — e.g. Date, Type (sale/purchase), Taxable Amount, VAT Amount, "
+            "Emirate, TRN, Invoice Number."
+        )
     return txns, last_map

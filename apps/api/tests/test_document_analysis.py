@@ -283,3 +283,22 @@ def test_vat201_importer_handles_mislabelled_files():
     import pytest
     with pytest.raises(ValueError):
         _sheets_from_bytes("old.xls", b"\xd0\xcf\x11\xe0rubbish")
+
+
+def test_vat201_scientific_trn_and_credit_note():
+    import io
+    from openpyxl import Workbook
+    from app.vat201.importer import parse_transactions, _clean_id
+    # Excel stores a 15-digit TRN as a float shown in scientific notation.
+    assert _clean_id(1.00047e14) == "100047000000000"
+    assert _clean_id("1.00047E+14") == "100047000000000"
+    wb = Workbook(); ws = wb.active
+    ws.append(["Date", "Transaction Type", "Taxpayer TRN", "Taxable Amount", "VAT Amount"])
+    ws.append(["2025-05-10", "Sales Invoice", 100047000000000, 1000, 50])
+    ws.append(["2025-05-15", "Credit Note", 100047000000000, 200, 10])
+    buf = io.BytesIO(); wb.save(buf)
+    txns, m = parse_transactions("data.xlsx", buf.getvalue())
+    assert m.get("doc_type") == "Transaction Type" and m.get("trn") == "Taxpayer TRN"
+    assert all(t.trn == "100047000000000" for t in txns)          # TRN not corrupted
+    cn = [t for t in txns if "credit" in (t.doc_type or "").lower()][0]
+    assert cn.taxable_amount < 0 and cn.vat_amount < 0             # credit note reduces the box
