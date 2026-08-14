@@ -534,6 +534,62 @@ export default function AnalyzePage() {
                     />
                   </div>
 
+                  {/* VAT result — tax code + independent recalculation */}
+                  {detail.result?.tax_code && (
+                    <div className="rounded-lg border border-border p-3">
+                      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg">VAT result</div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                        <div>
+                          <span className="text-muted">Tax code: </span>
+                          <b>{detail.result.tax_code}</b>
+                          {detail.result.tax_code_name ? ` — ${detail.result.tax_code_name}` : ""}
+                        </div>
+                        <div>
+                          <span className="text-muted">VAT treatment: </span>
+                          {detail.result.detected_treatment
+                            ? detail.result.detected_treatment.replace(/_/g, " ")
+                            : detail.result.tax_code_name || "—"}
+                        </div>
+                        <div>
+                          <span className="text-muted">Taxable amount: </span>
+                          {detail.result.taxable_amount ?? "—"}
+                        </div>
+                        <div>
+                          <span className="text-muted">VAT amount (invoice): </span>
+                          {inv.total_vat ?? "—"}
+                        </div>
+                        <div>
+                          <span className="text-muted">Expected VAT: </span>
+                          {detail.result.expected_vat ?? "—"}
+                        </div>
+                        <div
+                          className={
+                            detail.result.vat_difference && Number(detail.result.vat_difference) !== 0
+                              ? "font-medium text-danger"
+                              : ""
+                          }
+                        >
+                          <span className="text-muted">Difference: </span>
+                          {detail.result.vat_difference ?? "—"}
+                        </div>
+                        <div className="col-span-2">
+                          <span className="text-muted">Result: </span>
+                          <b
+                            className={
+                              detail.result.conclusion === "pass"
+                                ? "text-success"
+                                : detail.result.conclusion === "fail"
+                                  ? "text-danger"
+                                  : "text-warning"
+                            }
+                          >
+                            {(detail.result.conclusion ?? "review").toUpperCase()}
+                          </b>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="text-xs font-semibold uppercase text-muted">Totals</div>
                   <div className="grid grid-cols-3 gap-3">
                     <Field label="Net" value={inv.total_net ?? ""} onChange={(v) => setField("total_net", v)} score={conf("total_net")} evidence={ev("total_net")} />

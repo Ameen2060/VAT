@@ -356,6 +356,7 @@ def review_invoice(inv: Invoice, raw_text: str = "") -> ReviewResult:
     (present data that violates a rule) — never on extraction gaps, which are surfaced
     separately as verification items.
     """
+    from .tax_codes import resolve_tax_code
     from .treatment import assess_transaction
     from .validation import validate_invoice
 
@@ -366,6 +367,10 @@ def review_invoice(inv: Invoice, raw_text: str = "") -> ReviewResult:
     txn = assess_transaction(inv)
     if inv.transaction_type == TransactionType.UNKNOWN:
         inv.transaction_type = txn.transaction_type
+
+    # Step 5b: resolve the VAT tax code from the whole context (never the rate alone),
+    # using the invoice date for effective-date logic, and recompute expected VAT.
+    tax = resolve_tax_code(inv, inv.transaction_type)
 
     # Step 6: deterministic compliance rules (only assess data that is present).
     findings: list[Finding] = []
@@ -393,7 +398,7 @@ def review_invoice(inv: Invoice, raw_text: str = "") -> ReviewResult:
     # TRN, or lower-severity findings — is REVIEW; only a clean, complete document with
     # enough evidence is PASS. Overseas parties are never REVIEWed merely for lacking a
     # UAE TRN (that is handled as "Not applicable" and produces no finding).
-    conclusion, conclusion_reason = _conclude(inv, status, findings, verification_items, txn)
+    conclusion, conclusion_reason = _conclude(inv, status, findings, verification_items, txn, tax)
 
     return ReviewResult(
         compliance_status=status,
@@ -409,6 +414,11 @@ def review_invoice(inv: Invoice, raw_text: str = "") -> ReviewResult:
         conclusion_reason=conclusion_reason,
         place_of_supply=txn.place_of_supply,
         detected_treatment=inv.treatment,
+        tax_code=tax.code,
+        tax_code_name=tax.name,
+        taxable_amount=tax.taxable_amount,
+        expected_vat=tax.expected_vat,
+        vat_difference=tax.difference,
         summary=summary,
     )
 
@@ -417,7 +427,7 @@ def review_invoice(inv: Invoice, raw_text: str = "") -> ReviewResult:
 _MANDATORY = ("invoice_number", "invoice_date")
 
 
-def _conclude(inv, status, findings, verification_items, txn):
+def _conclude(inv, status, findings, verification_items, txn, tax=None):
     from .schemas import Conclusion
 
     if status == ComplianceStatus.FAIL:
@@ -430,6 +440,10 @@ def _conclude(inv, status, findings, verification_items, txn):
     if "invoice_date" in missing:
         reasons.append("Invoice Date not detected")
     reasons.extend(txn.review_reasons)
+    # An uncertain VAT tax code (e.g. 0% that can't be concluded from the rate alone)
+    # must be reviewed, never forced into PASS.
+    if tax is not None and not tax.certain:
+        reasons.append(f"VAT tax code {tax.code} needs confirmation — {tax.reason}")
     if any(f.severity in (Severity.MEDIUM, Severity.LOW) for f in findings):
         reasons.append("lower-severity findings require confirmation")
     if verification_items:

@@ -125,6 +125,48 @@ def test_domestic_uae_missing_number_and_date_is_review():
     assert "Invoice Number" in r.conclusion_reason or "Invoice Date" in r.conclusion_reason
 
 
+def test_tax_code_master_has_all_treatments():
+    from app.vat.tax_codes import TAX_CODES
+    codes = {t.code for t in TAX_CODES}
+    assert {"SR", "ZR", "EX", "OOS", "RC", "GCC", "OADJ", "IADJ", "CN", "DN"} <= codes
+
+
+def test_tax_code_standard_rated_and_expected_vat():
+    from decimal import Decimal
+    from app.vat.schemas import Invoice, PartyDetails, VatTreatment
+    from app.vat.tax_codes import resolve_tax_code
+    inv = Invoice(treatment=VatTreatment.STANDARD, total_net=Decimal("1000"), total_vat=Decimal("50"),
+                  supplier=PartyDetails(is_uae=True), recipient=PartyDetails(is_uae=True))
+    r = resolve_tax_code(inv)
+    assert r.code == "SR" and r.certain
+    assert r.expected_vat == Decimal("50.00") and r.difference == Decimal("0.00")
+
+
+def test_zero_percent_is_not_auto_zero_rated():
+    from decimal import Decimal
+    from app.vat.schemas import Invoice, PartyDetails
+    from app.vat.tax_codes import resolve_tax_code
+    inv = Invoice(total_net=Decimal("1000"), total_vat=Decimal("0"),
+                  supplier=PartyDetails(is_uae=True), recipient=PartyDetails(is_uae=True))
+    r = resolve_tax_code(inv)
+    # 0% must trigger REVIEW, not an automatic zero-rated PASS.
+    assert r.code == "ZR" and r.certain is False
+
+
+def test_credit_note_tax_code():
+    from app.vat.schemas import Invoice, InvoiceType
+    from app.vat.tax_codes import resolve_tax_code
+    r = resolve_tax_code(Invoice(invoice_type=InvoiceType.CREDIT_NOTE))
+    assert r.code == "CN"
+
+
+def test_effective_date_filters_active_codes():
+    from datetime import date
+    from app.vat.tax_codes import active_codes
+    assert len(active_codes(date(2026, 7, 1))) >= 10
+    assert active_codes(date(2015, 1, 1)) == []   # before UAE VAT commenced
+
+
 def test_import_from_overseas_supplier_flags_reverse_charge_review():
     text = "\n".join([
         "GLOBAL SUPPLIES GMBH", "Germany", "Invoice",

@@ -56,6 +56,11 @@ export interface ReviewResult {
   conclusion_reason?: string;
   place_of_supply?: string | null;
   detected_treatment?: string | null;
+  tax_code?: string | null;
+  tax_code_name?: string | null;
+  taxable_amount?: string | null;
+  expected_vat?: string | null;
+  vat_difference?: string | null;
   summary: string;
 }
 

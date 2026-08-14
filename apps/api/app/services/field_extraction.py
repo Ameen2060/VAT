@@ -246,6 +246,29 @@ def _customer_name(text: str, labels: dict[str, str], supplier_name: str | None 
         if _ok(name):
             return name
 
+    # 1b. Tolerant scan: find a customer label anywhere on a line (handles bilingual /
+    #     RTL layouts the colon-based label map misses) and take the value remainder.
+    _CUST_KEYS = ("clientname", "customername", "customer", "client", "billto",
+                  "soldto", "invoiceto", "buyer")
+    _CUST_NEG = ("customerno", "customertrn", "customeraccount", "customervat", "customercode")
+    for line in text.splitlines():
+        norm = _norm_label(line)
+        if not norm or any(neg in norm for neg in _CUST_NEG):
+            continue
+        if not any(k in norm for k in _CUST_KEYS):
+            continue
+        cleaned = _ARABIC_RE.sub(" ", line)
+        cleaned = re.sub(
+            r"(?i)\b(client\s*name|customer\s*name|client|customer|bill\s*to|sold\s*to|"
+            r"invoice\s*to|buyer|name|messrs|m/?s)\b[:.\-]*",
+            " ",
+            cleaned,
+        ).strip(" :.-/")
+        if len(cleaned) >= 3:
+            name = _clean_party_name(cleaned)
+            if _ok(name):
+                return name
+
     lines = [ln.strip() for ln in text.splitlines()]
 
     # 2. "Bill To"/"To" indicator → same-line remainder, else the next line.
@@ -374,21 +397,29 @@ def _build_evidence(text: str, inv: "Invoice") -> dict[str, dict]:
 # RTL-reordered "value : label" line is handled the same as "label: value".
 _ARABIC_RE = re.compile(r"[؀-ۿ]+")
 
-# Invoice-number labels, most-specific first, with a confidence score.
+# Invoice-number labels, most-specific first, with a confidence score. NOTE: a bare
+# "invoice" is intentionally excluded — it also matches "Invoice Amount/Value/Total",
+# which must never be read as the invoice number.
 _INV_NUM_LABELS: list[tuple[str, int]] = [
     ("taxinvoiceno", 10), ("taxinvoicenumber", 10),
     ("invoiceno", 9), ("invoicenumber", 9), ("invoicenum", 9), ("invoicenbr", 9),
-    ("invno", 8), ("invoice", 6),
+    ("invno", 8), ("invoiceref", 8), ("invoicereference", 8),
     ("billno", 8), ("billnumber", 8),
     ("documentno", 5), ("documentnumber", 5), ("docno", 5),
-    ("referenceno", 4), ("referencenumber", 4), ("refno", 4), ("reference", 3),
+    ("referenceno", 4), ("referencenumber", 4), ("refno", 4),
+    # Bare "invoice" (covers "Invoice #") kept last & low: the monetary negative labels
+    # and the bare-number guard stop "Invoice Amount 437,179.05" being read as a number.
+    ("invoice", 5),
 ]
-# Labels whose number must NEVER populate the invoice-number field.
+# Labels whose number must NEVER populate the invoice-number field — includes monetary
+# labels ("invoice amount/value/total") so a total is never mistaken for a number.
 _NEG_NUM_LABELS = (
     "purchaseorder", "pono", "ponumber", "lpono", "lpo", "contractno", "contractnumber",
     "deliveryno", "deliverynote", "quoteno", "quotationno", "customerno", "customeraccount",
     "accountno", "accountnumber", "crno", "crnumber", "trn", "vatno", "vatnumber",
     "taxregistration", "hscode", "serialno",
+    "invoiceamount", "invoicevalue", "invoicetotal", "totalamount", "amountdue",
+    "grandtotal", "totalinvoice", "netamount", "vatamount", "totaldue", "balancedue",
 )
 
 
@@ -442,8 +473,13 @@ def extract_invoice_number(text: str) -> tuple[str | None, float, int | None]:
             tokens = _num_tokens(lines[i + 1])
             ev_line = i + 1
         for tok in tokens:
+            has_letter_or_sep = bool(re.search(r"[A-Za-z/._-]", tok))
+            # A bare number (e.g. "437" from an amount) is only a plausible invoice
+            # number under a strong, specific label — never a weak/negative one.
+            if not has_letter_or_sep and (is_negative or label_score < 8):
+                continue
             score = label_score - (6 if is_negative else 0)
-            if re.search(r"[/-]", tok) or re.match(r"[A-Za-z]", tok):
+            if has_letter_or_sep:
                 score += 1  # invoice numbers usually have a prefix/separator
             if best is None or score > best[0]:
                 best = (score, tok, ev_line)

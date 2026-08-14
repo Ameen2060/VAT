@@ -161,3 +161,9 @@ class ReviewResult(ReviewResultBase):
     conclusion_reason: str = ""
     place_of_supply: str | None = None
     detected_treatment: VatTreatment | None = None
+    # VAT tax code (SR/ZR/EX/OOS/RC/GCC/adjustment) + independent VAT recalculation.
+    tax_code: str | None = None
+    tax_code_name: str | None = None
+    taxable_amount: Decimal | None = None
+    expected_vat: Decimal | None = None
+    vat_difference: Decimal | None = None
