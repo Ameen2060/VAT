@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import InterfaceError, OperationalError
 
 from . import __version__
 from .api.routes_ai import router as ai_router
@@ -66,20 +66,25 @@ app.add_middleware(
 )
 
 
-@app.exception_handler(OperationalError)
-async def _database_unavailable(_: Request, __: OperationalError) -> JSONResponse:
+async def _database_unavailable(_: Request, __: Exception) -> JSONResponse:
     """Return a clear 503 (not a raw 500) when the database can't be reached — e.g.
-    the managed Postgres isn't attached yet, or is briefly restarting. The frontend
-    maps 503 to a friendly 'temporarily unavailable — retry' message."""
+    the managed Postgres is waking from idle, briefly restarting, or not attached. The
+    frontend maps 503 to a friendly 'temporarily unavailable — retry' message and
+    auto-retries, so a waking database is invisible to the user."""
     return JSONResponse(
         status_code=503,
         content={
             "detail": (
-                "The service database is not reachable. It may still be connecting or "
-                "restarting — please retry in a moment."
+                "The service database is momentarily unavailable (waking up or "
+                "reconnecting). Please retry in a moment."
             )
         },
     )
+
+
+# Both are connection-class SQLAlchemy errors; treat either as "retry", never a 500.
+app.add_exception_handler(OperationalError, _database_unavailable)
+app.add_exception_handler(InterfaceError, _database_unavailable)
 
 
 # Auth endpoints are public; everything else requires a valid session (when

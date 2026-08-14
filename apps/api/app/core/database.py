@@ -65,6 +65,11 @@ engine_kwargs: dict = {"connect_args": connect_args, "future": True, "pool_pre_p
 # disable psycopg's server-side prepared statements: if the injected URL happens to be
 # a pgbouncer (transaction-pooling) endpoint, cached prepared statements collide across
 # connections ("prepared statement already exists").
+if DATABASE_URL.startswith("postgresql"):
+    # Wait (up to 10s) for the server to accept a connection rather than failing
+    # instantly — serverless Postgres (Neon) auto-suspends when idle and needs a
+    # moment to wake on the first request after a quiet period.
+    connect_args["connect_timeout"] = 10
 if DATABASE_URL.startswith("postgresql") and os.getenv("VERCEL"):
     from sqlalchemy.pool import NullPool
 
@@ -79,9 +84,36 @@ class Base(DeclarativeBase):
     pass
 
 
+def _wake_and_verify(db: Session) -> None:
+    """Confirm the connection is live before the endpoint uses it, retrying briefly.
+
+    Serverless Postgres (Neon free tier) suspends when idle; the first query after a
+    quiet period can fail once while the compute wakes. Retrying here — with a short
+    backoff — means a waking database is transparent to the user instead of surfacing
+    as a 500/503. Runs in FastAPI's threadpool, so the sleeps don't block the loop.
+    """
+    from time import sleep
+
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError, OperationalError
+
+    last: Exception | None = None
+    for attempt in range(4):
+        try:
+            db.execute(text("SELECT 1"))
+            return
+        except (OperationalError, DBAPIError) as exc:  # connection-class errors only
+            last = exc
+            db.rollback()
+            sleep(0.5 * (attempt + 1))  # 0.5s, 1s, 1.5s
+    if last is not None:
+        raise last
+
+
 def get_db() -> Iterator[Session]:
     db = SessionLocal()
     try:
+        _wake_and_verify(db)
         yield db
     finally:
         db.close()
