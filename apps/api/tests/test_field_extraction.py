@@ -49,7 +49,8 @@ def test_classify_tax_invoice():
 def test_parse_core_fields():
     inv = parse_invoice(OCR_TEXT)
     assert inv.invoice_number == "CMECLLC20260701"
-    assert inv.invoice_date == "9/7/2026"
+    assert inv.invoice_date == "2026-07-09"          # normalised to ISO (day-first)
+    assert inv.invoice_date_original == "9/7/2026"    # original text preserved
     assert inv.supplier.trn == "105110997100003"
     assert inv.recipient.trn == "104215659400003"
     assert "MAGPARK" in (inv.recipient.name or "")
@@ -104,8 +105,9 @@ NetTotalAED:Three Hundred Eighty-Seven Thousand 387,172.07
 
 def test_month_name_date_and_to_block_customer():
     inv = parse_invoice(KETURAH_OCR)
-    # Month-name-first date with no label is detected.
-    assert inv.invoice_date == "July 24, 2026"
+    # Month-name-first date with no label is detected and normalised to ISO.
+    assert inv.invoice_date == "2026-07-24"
+    assert inv.invoice_date_original == "July 24, 2026"
     # Customer under a "To," block — distinct from the supplier.
     assert "Keturah Lifescaping" in (inv.recipient.name or "")
     assert "Mohammed Munaf" in (inv.supplier.name or "")
@@ -131,11 +133,12 @@ def test_vat_exclusive_single_total():
 
 
 def test_various_date_formats():
+    # All forms normalise to ISO (YYYY-MM-DD); day-first for ambiguous numeric dates.
     for text, expected in [
         ("Date: 2026-07-24", "2026-07-24"),
-        ("Invoice Date: 24/07/2026", "24/07/2026"),
-        ("Dated 24 July 2026", "24 July 2026"),
-        ("Issued on Aug 3, 2026", "Aug 3, 2026"),
+        ("Invoice Date: 24/07/2026", "2026-07-24"),
+        ("Dated 24 July 2026", "2026-07-24"),
+        ("Issued on Aug 3, 2026", "2026-08-03"),
     ]:
         assert parse_invoice(text).invoice_date == expected
 

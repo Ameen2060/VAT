@@ -51,6 +51,16 @@ class ComplianceStatus(str, Enum):
     FAIL = "fail"
 
 
+class Conclusion(str, Enum):
+    """The three-way analyst conclusion shown to users. PASS = evidence supports the
+    treatment; FAIL = a clear error was found; REVIEW = not enough information (or a
+    cross-border assessment is needed) to conclude reliably."""
+
+    PASS = "pass"
+    FAIL = "fail"
+    REVIEW = "review"
+
+
 class RiskLevel(str, Enum):
     LOW = "low"
     MEDIUM = "medium"

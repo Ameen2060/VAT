@@ -273,12 +273,45 @@ def rule_export_evidence_note(inv: Invoice) -> Iterator[Finding]:
         )
 
 
+def rule_uae_party_missing_trn(inv: Invoice) -> Iterator[Finding]:
+    """A UAE-established party with no valid TRN is flagged for review — NEVER an
+    overseas party (is_uae is False), which legitimately has no UAE TRN. Kept at
+    MEDIUM/LOW so it drives a REVIEW, not a FAIL."""
+    if inv.supplier.is_uae is True and not _valid_trn(inv.supplier.trn):
+        yield Finding(
+            rule_id="UAE-SUP-TRN-001",
+            severity=Severity.MEDIUM,
+            title="UAE supplier — TRN missing / not detected",
+            detail=(
+                "The supplier appears to be UAE-established but no valid 15-digit UAE TRN "
+                "was detected. A UAE tax invoice must show the supplier's TRN."
+            ),
+            legal_ref=C.LEGAL_REFS["full_invoice_particulars"],
+            affects=Party.SUPPLIER,
+            recommendation="Confirm the supplier's TRN and that it appears on the invoice.",
+        )
+    if inv.recipient.is_uae is True and not _valid_trn(inv.recipient.trn):
+        yield Finding(
+            rule_id="UAE-REC-TRN-001",
+            severity=Severity.LOW,
+            title="UAE customer — TRN not detected",
+            detail=(
+                "The customer appears to be UAE-based but no TRN was detected. Where the "
+                "customer is VAT-registered, the TRN should be shown."
+            ),
+            legal_ref=C.LEGAL_REFS["full_invoice_particulars"],
+            affects=Party.RECIPIENT,
+            recommendation="Confirm whether the customer is registered and add the TRN if so.",
+        )
+
+
 # ── Registry & engine ────────────────────────────────────────────────────────
 # Only checks that assess data actually present on the document. Missing particulars
 # are surfaced by the validation layer as verification items, never as failures.
 ALL_RULES = [
     rule_supplier_trn_format,
     rule_recipient_trn_format,
+    rule_uae_party_missing_trn,
     rule_simplified_invoice_conditions,
     rule_reverse_charge,
     rule_treatment_rate_consistency,
@@ -323,10 +356,16 @@ def review_invoice(inv: Invoice, raw_text: str = "") -> ReviewResult:
     (present data that violates a rule) — never on extraction gaps, which are surfaced
     separately as verification items.
     """
+    from .treatment import assess_transaction
     from .validation import validate_invoice
 
     # Step 4: validation + verification flagging.
     verification_items, validations = validate_invoice(inv, raw_text)
+
+    # Step 5: geography/direction assessment (place of supply, cross-border review).
+    txn = assess_transaction(inv)
+    if inv.transaction_type == TransactionType.UNKNOWN:
+        inv.transaction_type = txn.transaction_type
 
     # Step 6: deterministic compliance rules (only assess data that is present).
     findings: list[Finding] = []
@@ -348,6 +387,14 @@ def review_invoice(inv: Invoice, raw_text: str = "") -> ReviewResult:
         f"{highs} high, {meds} medium, {lows} low finding(s){verify_note}."
     )
 
+    # Step 8: three-way conclusion (PASS / FAIL / REVIEW). A clear error (HIGH finding)
+    # is FAIL; otherwise anything that can't be relied on — missing mandatory fields,
+    # a cross-border case needing place-of-supply assessment, a UAE party without a
+    # TRN, or lower-severity findings — is REVIEW; only a clean, complete document with
+    # enough evidence is PASS. Overseas parties are never REVIEWed merely for lacking a
+    # UAE TRN (that is handled as "Not applicable" and produces no finding).
+    conclusion, conclusion_reason = _conclude(inv, status, findings, verification_items, txn)
+
     return ReviewResult(
         compliance_status=status,
         risk_level=risk,
@@ -358,5 +405,36 @@ def review_invoice(inv: Invoice, raw_text: str = "") -> ReviewResult:
         validations=validations,
         requires_verification=requires_verification,
         recomputed_vat=_recompute_vat(inv),
+        conclusion=conclusion,
+        conclusion_reason=conclusion_reason,
+        place_of_supply=txn.place_of_supply,
+        detected_treatment=inv.treatment,
         summary=summary,
     )
+
+
+# Mandatory fields for an invoice-type document (section 8 of the spec).
+_MANDATORY = ("invoice_number", "invoice_date")
+
+
+def _conclude(inv, status, findings, verification_items, txn):
+    from .schemas import Conclusion
+
+    if status == ComplianceStatus.FAIL:
+        return Conclusion.FAIL, "A clear compliance error was identified — see findings."
+
+    reasons: list[str] = []
+    missing = [f for f in _MANDATORY if not getattr(inv, f, None)]
+    if "invoice_number" in missing:
+        reasons.append("Invoice Number not detected")
+    if "invoice_date" in missing:
+        reasons.append("Invoice Date not detected")
+    reasons.extend(txn.review_reasons)
+    if any(f.severity in (Severity.MEDIUM, Severity.LOW) for f in findings):
+        reasons.append("lower-severity findings require confirmation")
+    if verification_items:
+        reasons.append(f"{len(verification_items)} field(s) require manual verification")
+
+    if reasons:
+        return Conclusion.REVIEW, "Review required: " + "; ".join(reasons[:4]) + "."
+    return Conclusion.PASS, "Evidence supports the document information and VAT treatment."

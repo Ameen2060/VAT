@@ -155,7 +155,10 @@ def classify(text: str) -> InvoiceType:
 
 _COMPANY_SUFFIX = re.compile(
     r"(L\.?L\.?C|LLC|FZ[- ]?LLC|FZE|FZCO|DMCC|W\.?L\.?L|LTD|LIMITED|"
-    r"INC|PLC|EST\b|TRADING|CONTRACTING|GROUP|INDUSTRIES|CO\.)",
+    r"INC|PLC|EST\b|TRADING|CONTRACTING|GROUP|INDUSTRIES|CO\.|"
+    # International suffixes (multi-char only, to avoid matching inside words) so
+    # overseas suppliers/customers are recognised too.
+    r"GMBH|S\.?A\.?R\.?L|PVT|PTE|CORP|CORPORATION|ENTERPRISES|SDN\s?BHD|LLP)",
     re.I,
 )
 
@@ -277,6 +280,31 @@ def _customer_name(text: str, labels: dict[str, str], supplier_name: str | None 
     return None
 
 
+def _address_near_name(text: str, name: str, supplier_address: str | None = None) -> str | None:
+    """Return the address block sitting just after the customer's name line, so the
+    recipient address is never confused with the supplier's letterhead address."""
+    lines = [ln.strip() for ln in text.splitlines()]
+    key = _norm_label(name)[:14]
+    idx = next((i for i, ln in enumerate(lines) if key and key in _norm_label(ln)), -1)
+    if idx < 0:
+        return None
+    for j in range(idx, min(idx + 5, len(lines))):
+        ln = lines[j]
+        head = _norm_label(ln.split(":")[0]) if ":" in ln else ""
+        if head in ("address", "add", "customeraddress", "billingaddress", "clientaddress"):
+            val = ln.split(":", 1)[1].strip()
+            parts = [val] if val else []
+            for k in range(j + 1, min(j + 3, len(lines))):
+                nxt = lines[k]
+                if not nxt or ":" in nxt or _COMPANY_SUFFIX.search(nxt):
+                    break
+                parts.append(nxt)
+            addr = ", ".join(p for p in parts if p)
+            if addr and addr != (supplier_address or ""):
+                return addr
+    return None
+
+
 # ── source-evidence locator (Level-4 traceability) ────────────────────────────
 def _num_candidates(value) -> list[str]:
     """Textual forms an amount might appear as in the document (plain, grouped, no
@@ -340,6 +368,202 @@ def _build_evidence(text: str, inv: "Invoice") -> dict[str, dict]:
     return ev
 
 
+# ── robust invoice-number & date extraction ──────────────────────────────────
+# These tolerate bilingual (Arabic/English) and colon-less layouts: they scan every
+# line for a label keyword and pull the value token from anywhere on the line, so an
+# RTL-reordered "value : label" line is handled the same as "label: value".
+_ARABIC_RE = re.compile(r"[؀-ۿ]+")
+
+# Invoice-number labels, most-specific first, with a confidence score.
+_INV_NUM_LABELS: list[tuple[str, int]] = [
+    ("taxinvoiceno", 10), ("taxinvoicenumber", 10),
+    ("invoiceno", 9), ("invoicenumber", 9), ("invoicenum", 9), ("invoicenbr", 9),
+    ("invno", 8), ("invoice", 6),
+    ("billno", 8), ("billnumber", 8),
+    ("documentno", 5), ("documentnumber", 5), ("docno", 5),
+    ("referenceno", 4), ("referencenumber", 4), ("refno", 4), ("reference", 3),
+]
+# Labels whose number must NEVER populate the invoice-number field.
+_NEG_NUM_LABELS = (
+    "purchaseorder", "pono", "ponumber", "lpono", "lpo", "contractno", "contractnumber",
+    "deliveryno", "deliverynote", "quoteno", "quotationno", "customerno", "customeraccount",
+    "accountno", "accountnumber", "crno", "crnumber", "trn", "vatno", "vatnumber",
+    "taxregistration", "hscode", "serialno",
+)
+
+
+def _is_trn_token(tok: str) -> bool:
+    digits = "".join(ch for ch in tok if ch.isdigit())
+    return len(digits) == 15 and digits == tok
+
+
+def _looks_like_date_token(tok: str) -> bool:
+    if _DATE_RE.fullmatch(tok):
+        return True
+    # d/m/y or d-m-y or d.m.y all-numeric
+    return bool(re.fullmatch(r"\d{1,4}[/.\-]\d{1,2}[/.\-]\d{2,4}", tok))
+
+
+def _num_tokens(line: str) -> list[str]:
+    """Invoice-number-shaped tokens on a line: alphanumeric with -/._# separators,
+    containing at least one digit, excluding TRNs and dates."""
+    cleaned = _ARABIC_RE.sub(" ", line)
+    out: list[str] = []
+    for m in re.finditer(r"[A-Za-z0-9][A-Za-z0-9/._#-]{1,28}[A-Za-z0-9]", cleaned):
+        tok = m.group().strip("#.:-/ ")
+        if not tok or not any(ch.isdigit() for ch in tok):
+            continue
+        if _is_trn_token(tok) or _looks_like_date_token(tok):
+            continue
+        out.append(tok)
+    return out
+
+
+def extract_invoice_number(text: str) -> tuple[str | None, float, int | None]:
+    """Return (invoice_number, confidence, line_no). Scans for labelled numbers first
+    (ranked by label specificity), then a bare INV-style reference."""
+    lines = text.splitlines()
+    best: tuple[int, str, int] | None = None  # (score, value, line_no)
+    for i, raw in enumerate(lines):
+        norm = _norm_label(raw)
+        if not norm:
+            continue
+        label_score = 0
+        for lbl, sc in _INV_NUM_LABELS:
+            if lbl in norm:
+                label_score = sc
+                break
+        if label_score == 0:
+            continue
+        is_negative = any(neg in norm for neg in _NEG_NUM_LABELS)
+        tokens = _num_tokens(raw)
+        ev_line = i
+        if not tokens and i + 1 < len(lines):
+            tokens = _num_tokens(lines[i + 1])
+            ev_line = i + 1
+        for tok in tokens:
+            score = label_score - (6 if is_negative else 0)
+            if re.search(r"[/-]", tok) or re.match(r"[A-Za-z]", tok):
+                score += 1  # invoice numbers usually have a prefix/separator
+            if best is None or score > best[0]:
+                best = (score, tok, ev_line)
+    if best and best[0] > 0:
+        conf = 0.97 if best[0] >= 9 else 0.9 if best[0] >= 6 else 0.75
+        return best[1], conf, best[2]
+    # Fallback: a bare INV-style reference anywhere (e.g. "CMW/INV.76-26").
+    m = _INV_REF_RE.search(text)
+    if m:
+        return m.group(1).strip(), 0.6, None
+    return None, 0.0, None
+
+
+# Date labels: invoice-issuance labels (scored) and other dates we must NOT confuse.
+_INV_DATE_LABELS: list[tuple[str, int]] = [
+    ("taxinvoicedate", 10), ("invoicedate", 9), ("billdate", 8),
+    ("dateofissue", 7), ("issuedate", 7), ("issuedon", 7), ("date", 3),
+]
+_OTHER_DATE_LABELS = (
+    "duedate", "paymentdue", "dueon", "supplydate", "dateofsupply", "taxpoint",
+    "deliverydate", "podate", "purchaseorderdate", "contractdate", "paymentdate",
+)
+_MONTHS_FULL = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def normalize_date(raw: str) -> tuple[str | None, str]:
+    """Normalise a displayed date to ISO (YYYY-MM-DD), preserving the original text.
+    Defaults to day-first (UAE/international), but respects an unambiguous order
+    (a first part > 12 ⇒ day-first; a middle part > 12 ⇒ month-first)."""
+    original = raw.strip()
+    s = original
+    m = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", s)  # ISO
+    if m:
+        y, mo, d = map(int, m.groups())
+        return _iso(y, mo, d), original
+    # Written month: "24 July 2026" or "July 24, 2026"
+    m = re.search(rf"(\d{{1,2}})\s*({_MONTHS})[a-z]*\.?\s*,?\s*(\d{{2,4}})", s, re.I)
+    if m:
+        d, mon, y = int(m.group(1)), _MONTHS_FULL[m.group(2)[:3].lower()], int(m.group(3))
+        return _iso(_yr(y), mon, d), original
+    m = re.search(rf"({_MONTHS})[a-z]*\.?\s*(\d{{1,2}})\s*,?\s*(\d{{2,4}})", s, re.I)
+    if m:
+        mon, d, y = _MONTHS_FULL[m.group(1)[:3].lower()], int(m.group(2)), int(m.group(3))
+        return _iso(_yr(y), mon, d), original
+    # Numeric d/m/y (or m/d/y): decide day-first vs month-first from the values.
+    m = re.search(r"(\d{1,4})[/.\-](\d{1,2})[/.\-](\d{2,4})", s)
+    if m:
+        a, b, c = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if m.group(1).__len__() == 4:            # YYYY/MM/DD
+            return _iso(a, b, c), original
+        if a > 12 >= b or a > 31:                 # clearly day-first
+            return _iso(_yr(c), b, a), original
+        if b > 12:                                # middle > 12 ⇒ month-first
+            return _iso(_yr(c), a, b), original
+        return _iso(_yr(c), b, a), original       # default day-first (UAE)
+    return None, original
+
+
+def _yr(y: int) -> int:
+    return y + 2000 if y < 100 else y
+
+
+def _iso(y: int, mo: int, d: int) -> str | None:
+    try:
+        from datetime import date
+
+        return date(y, mo, d).isoformat()
+    except ValueError:
+        return None
+
+
+def extract_dates(text: str) -> dict[str, object]:
+    """Classify dates on the document. Returns invoice_date (ISO), its original text,
+    confidence, line_no, plus due/supply dates so they are never mistaken for it."""
+    lines = text.splitlines()
+    inv_best: tuple[int, str, int] | None = None       # (score, raw_date, line_no)
+    due = supply = None
+    for i, raw in enumerate(lines):
+        norm = _norm_label(raw)
+        dm = _DATE_RE.search(_ARABIC_RE.sub(" ", raw))
+        if not dm:
+            continue
+        raw_date = dm.group(1)
+        other = next((o for o in _OTHER_DATE_LABELS if o in norm), None)
+        if other:
+            if other in ("duedate", "paymentdue", "dueon") and not due:
+                due = raw_date
+            elif other in ("supplydate", "dateofsupply", "taxpoint", "deliverydate") and not supply:
+                supply = raw_date
+            continue  # never treat a due/supply/PO date as the invoice date
+        score = 0
+        for lbl, sc in _INV_DATE_LABELS:
+            if lbl in norm:
+                score = sc
+                break
+        if score and (inv_best is None or score > inv_best[0]):
+            inv_best = (score, raw_date, i)
+    # Fallback: first plain date if nothing was labelled as an invoice date.
+    if inv_best is None:
+        for i, raw in enumerate(lines):
+            dm = _DATE_RE.search(_ARABIC_RE.sub(" ", raw))
+            if dm and not any(o in _norm_label(raw) for o in _OTHER_DATE_LABELS):
+                inv_best = (0, dm.group(1), i)
+                break
+    out: dict[str, object] = {"invoice_date": None, "original": None, "confidence": 0.0,
+                              "line_no": None, "due": None, "supply": None}
+    if inv_best:
+        iso, original = normalize_date(inv_best[1])
+        out.update(invoice_date=iso or original, original=original, line_no=inv_best[2],
+                   confidence=0.9 if inv_best[0] >= 7 else 0.6)
+    if due:
+        out["due"] = normalize_date(due)[0] or due
+    if supply:
+        out["supply"] = normalize_date(supply)[0] or supply
+    return out
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 def parse_invoice(text: str) -> Invoice:
     inv = Invoice()
@@ -355,37 +579,25 @@ def parse_invoice(text: str) -> Invoice:
     inv.has_tax_invoice_label = "tax invoice" in compact or "taxinvoice" in _norm_label(text)
     inv.has_reverse_charge_statement = "reverse charge" in compact
 
-    # Invoice number — labelled first, else a reference pattern like "CMW/INV.76-26".
-    num = _first_label(
-        labels, "taxinvoicenumber", "invoicenumber", "invoiceno", "invoicenum", "invno",
-        "billno", "documentno", "docno", "referenceno", "refno",
-    )
+    # Invoice number — robust, label-scored, bilingual/colon-less tolerant.
+    num, num_conf, _num_line = extract_invoice_number(text)
     if num:
-        inv.invoice_number = num.split()[0]
-        set_conf("invoice_number", 0.9)
-    else:
-        m = _INV_REF_RE.search(text)
-        if m:
-            inv.invoice_number = m.group(1).strip()
-            set_conf("invoice_number", 0.6)
+        inv.invoice_number = num
+        set_conf("invoice_number", num_conf)
 
-    # Dates
-    date = _first_label(labels, "date", "invoicedate", "dateofissue", "issuedate")
-    if not date:
-        m = _DATE_RE.search(text)
-        date = m.group(1) if m else None
-        if date:
-            set_conf("invoice_date", 0.6)
-    else:
-        m = _DATE_RE.search(date)
-        date = m.group(1) if m else date
-        set_conf("invoice_date", 0.85)
-    inv.invoice_date = date
-    due = _first_label(labels, "duedate", "paymentdue", "dueon")
-    if due:
-        m = _DATE_RE.search(due)
-        inv.due_date = m.group(1) if m else due
-        set_conf("due_date", 0.85)
+    # Dates — classify the invoice date vs due/supply dates; normalise to ISO while
+    # preserving the original displayed text. Never picks a due/supply/PO date.
+    dates = extract_dates(text)
+    if dates["invoice_date"]:
+        inv.invoice_date = str(dates["invoice_date"])
+        inv.invoice_date_original = dates["original"]  # type: ignore[assignment]
+        set_conf("invoice_date", float(dates["confidence"]))  # type: ignore[arg-type]
+    if dates["due"]:
+        inv.due_date = str(dates["due"])
+        set_conf("due_date", 0.8)
+    if dates["supply"]:
+        inv.supply_date = str(dates["supply"])
+        set_conf("supply_date", 0.8)
 
     # TRNs — labelled first, else positional (first = supplier, second = recipient).
     supplier = PartyDetails()
@@ -434,11 +646,17 @@ def parse_invoice(text: str) -> Invoice:
         recipient.name = cust_name
         set_conf("recipient.name", 0.8)
 
-    # Addresses / contacts
-    addr = _first_label(labels, "registeredaddress", "customeraddress", "billingaddress", "address")
+    # Recipient address — prefer a customer-specific label, else the address block that
+    # sits next to the customer's name; never silently borrow the supplier's address.
+    addr = _first_label(labels, "customeraddress", "billingaddress", "clientaddress", "shiptoaddress")
     if addr:
         recipient.address = addr
-        set_conf("recipient.address", 0.7)
+        set_conf("recipient.address", 0.75)
+    elif recipient.name:
+        near = _address_near_name(text, recipient.name, supplier.address)
+        if near:
+            recipient.address = near
+            set_conf("recipient.address", 0.6)
     email = _EMAIL_RE.search(text)
     if email:
         supplier.email = email.group()
@@ -559,6 +777,17 @@ def parse_invoice(text: str) -> Invoice:
         set_conf("payment.iban", 0.9)
     if any([pay.bank_name, pay.account_name, pay.account_number, pay.swift, pay.iban]):
         inv.payment = pay
+
+    # Assess each party's geography & UAE-VAT status (outside-UAE aware): sets
+    # country, is_uae and vat_registration_status on supplier and recipient.
+    from ..vat.parties import assess_party
+
+    assess_party(inv.supplier)
+    assess_party(inv.recipient)
+    if inv.supplier.country:
+        set_conf("supplier.country", 0.7)
+    if inv.recipient.country:
+        set_conf("recipient.country", 0.7)
 
     inv.field_confidence = conf
     inv.field_evidence = _build_evidence(text, inv)

@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 # existing imports (`from app.vat.schemas import Finding`, ...) keep working unchanged.
 from ..compliance.domain import (  # noqa: F401  (re-exported for backwards compat)
     ComplianceStatus,
+    Conclusion,
     Finding,
     Party,
     ReviewResultBase,
@@ -65,6 +66,10 @@ class PartyDetails(BaseModel):
     trn: str | None = None
     phone: str | None = None
     email: str | None = None
+    # Geography & UAE-VAT status (assessed after extraction — see app.vat.parties).
+    country: str | None = None
+    is_uae: bool | None = None                  # True inside UAE, False outside, None unknown
+    vat_registration_status: str | None = None  # human-readable, outside-UAE aware
 
 
 class PaymentInfo(BaseModel):
@@ -93,7 +98,8 @@ class Invoice(BaseModel):
     # Identity
     invoice_type: InvoiceType = InvoiceType.UNKNOWN
     invoice_number: str | None = None
-    invoice_date: str | None = None            # ISO date string; parsed leniently
+    invoice_date: str | None = None            # normalised ISO date (YYYY-MM-DD)
+    invoice_date_original: str | None = None    # exact date text as printed on the document
     supply_date: str | None = None             # date of supply, if different
     due_date: str | None = None
 
@@ -149,3 +155,9 @@ class ReviewResult(ReviewResultBase):
     invoice_type: InvoiceType
     transaction_type: TransactionType
     recomputed_vat: Decimal | None = None
+    # Three-way analyst conclusion (PASS/FAIL/REVIEW) + why, place of supply, and the
+    # detected VAT treatment. These sit alongside the finer-grained compliance_status.
+    conclusion: Conclusion = Conclusion.REVIEW
+    conclusion_reason: str = ""
+    place_of_supply: str | None = None
+    detected_treatment: VatTreatment | None = None
