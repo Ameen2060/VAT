@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import type { ExtractedInvoice, ReviewDetail } from "@/lib/types";
+import type { ExtractedInvoice, PartyDetails, ReviewDetail } from "@/lib/types";
 import { Card, RiskBadge, StatusBadge } from "@/components/ui";
 
 // ── confidence helpers ───────────────────────────────────────────────────────
@@ -144,6 +144,83 @@ function Field({
         className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-1.5 text-sm outline-none focus:border-brand"
       />
     </label>
+  );
+}
+
+const DOC_TYPE_LABELS: Record<string, string> = {
+  tax_invoice: "Tax Invoice",
+  simplified_tax_invoice: "Simplified Tax Invoice",
+  credit_note: "Credit Note",
+  debit_note: "Debit Note",
+  receipt: "Receipt",
+  invoice: "Invoice",
+  unknown: "Unknown — Review required",
+};
+
+function prettyType(t?: string | null): string {
+  if (!t) return "Unknown — Review required";
+  return DOC_TYPE_LABELS[t] ?? t.replace(/_/g, " ");
+}
+
+function ReviewFlag({ text }: { text: string }) {
+  return <div className="mt-1 text-[11px] font-medium text-warning">{text}</div>;
+}
+
+// A read-only labelled line for assessed (non-editable) party attributes.
+function MetaLine({ label, value, tone }: { label: string; value?: string | null; tone?: "warn" | "ok" }) {
+  return (
+    <div className="text-sm">
+      <span className="text-xs text-muted">{label}: </span>
+      <span
+        className={
+          tone === "warn" ? "font-medium text-warning" : tone === "ok" ? "font-medium text-success" : "font-medium"
+        }
+      >
+        {value || "Not detected — Review required"}
+      </span>
+    </div>
+  );
+}
+
+// One party (customer or vendor). Always rendered — both sides are shown even when one
+// is missing (spec §1), and an overseas party without a UAE TRN is "Not applicable".
+function PartyCard({
+  title,
+  party,
+  prefix,
+  conf,
+  ev,
+  setField,
+}: {
+  title: string;
+  party: PartyDetails;
+  prefix: "supplier" | "recipient";
+  conf: (k: string) => number | undefined;
+  ev: (k: string) => Evidence | undefined;
+  setField: (path: string, val: string) => void;
+}) {
+  const location =
+    party.is_uae === true ? "UAE" : party.is_uae === false ? "Outside UAE" : "Unknown — Review required";
+  const notDetected = !party.name && !party.trn;
+  return (
+    <div className="rounded-lg border border-border p-3">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-fg">{title}</div>
+      {notDetected && <ReviewFlag text="Not detected — Review required" />}
+      <div className="space-y-2">
+        <Field label="Name" value={party.name ?? ""} onChange={(v) => setField(`${prefix}.name`, v)} score={conf(`${prefix}.name`)} evidence={ev(`${prefix}.name`)} />
+        <Field label="TRN" value={party.trn ?? ""} onChange={(v) => setField(`${prefix}.trn`, v)} score={conf(`${prefix}.trn`)} evidence={ev(`${prefix}.trn`)} />
+        <MetaLine label="Country" value={party.country} />
+        <MetaLine label="Location" value={location} tone={party.is_uae === false ? undefined : party.is_uae ? "ok" : "warn"} />
+        <MetaLine
+          label="VAT status"
+          value={party.vat_registration_status}
+          tone={
+            (party.vat_registration_status || "").toLowerCase().includes("missing") ? "warn" : undefined
+          }
+        />
+        <Field label="Address" value={party.address ?? ""} onChange={(v) => setField(`${prefix}.address`, v)} score={conf(`${prefix}.address`)} evidence={ev(`${prefix}.address`)} />
+      </div>
+    </div>
   );
 }
 
@@ -395,25 +472,67 @@ export default function AnalyzePage() {
                 </pre>
               ) : (
                 <div className="h-[560px] space-y-4 overflow-auto p-4">
+                  {/* Conclusion (PASS / FAIL / REVIEW) */}
+                  {detail.result?.conclusion && (
+                    <div
+                      className={`rounded-lg border px-3 py-2 text-sm ${
+                        detail.result.conclusion === "pass"
+                          ? "border-success/40 bg-success/5 text-success"
+                          : detail.result.conclusion === "fail"
+                            ? "border-danger/40 bg-danger/5 text-danger"
+                            : "border-warning/40 bg-warning/5 text-warning"
+                      }`}
+                    >
+                      <span className="font-semibold uppercase">{detail.result.conclusion}</span>
+                      {detail.result.conclusion_reason ? ` — ${detail.result.conclusion_reason}` : ""}
+                    </div>
+                  )}
+
+                  {/* Document information — always visible */}
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted">Document information</div>
                   <div className="grid grid-cols-2 gap-3">
-                    <Field label="Invoice #" value={inv.invoice_number ?? ""} onChange={(v) => setField("invoice_number", v)} score={conf("invoice_number")} evidence={ev("invoice_number")} />
-                    <Field label="Date" value={inv.invoice_date ?? ""} onChange={(v) => setField("invoice_date", v)} score={conf("invoice_date")} evidence={ev("invoice_date")} />
+                    <div className="text-sm">
+                      <div className="text-xs text-muted">Document type</div>
+                      <div className="font-medium">{prettyType(inv.invoice_type)}</div>
+                    </div>
+                    <div className="text-sm">
+                      <div className="text-xs text-muted">Place of supply</div>
+                      <div className="font-medium">{detail.result?.place_of_supply || "—"}</div>
+                    </div>
+                    <div>
+                      <Field label="Invoice number" value={inv.invoice_number ?? ""} onChange={(v) => setField("invoice_number", v)} score={conf("invoice_number")} evidence={ev("invoice_number")} />
+                      {!inv.invoice_number && <ReviewFlag text="Invoice Number: Not detected — Review required" />}
+                    </div>
+                    <div>
+                      <Field label="Invoice date" value={inv.invoice_date ?? ""} onChange={(v) => setField("invoice_date", v)} score={conf("invoice_date")} evidence={ev("invoice_date")} />
+                      {inv.invoice_date_original && inv.invoice_date_original !== inv.invoice_date && (
+                        <div className="mt-1 text-[11px] text-muted">As printed: {inv.invoice_date_original}</div>
+                      )}
+                      {!inv.invoice_date && <ReviewFlag text="Invoice Date: Not detected — Review required" />}
+                    </div>
                     <Field label="Due date" value={inv.due_date ?? ""} onChange={(v) => setField("due_date", v)} score={conf("due_date")} evidence={ev("due_date")} />
                     <Field label="Currency" value={inv.currency ?? ""} onChange={(v) => setField("currency", v)} score={conf("currency")} />
                   </div>
 
-                  <div className="text-xs font-semibold uppercase text-muted">Supplier</div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Name" value={sup.name ?? ""} onChange={(v) => setField("supplier.name", v)} score={conf("supplier.name")} evidence={ev("supplier.name")} />
-                    <Field label="TRN" value={sup.trn ?? ""} onChange={(v) => setField("supplier.trn", v)} score={conf("supplier.trn")} evidence={ev("supplier.trn")} />
+                  {/* Customer / Buyer and Vendor / Supplier — both always shown */}
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <PartyCard
+                      title="Customer / Buyer"
+                      party={rec}
+                      prefix="recipient"
+                      conf={conf}
+                      ev={ev}
+                      setField={setField}
+                    />
+                    <PartyCard
+                      title="Vendor / Supplier"
+                      party={sup}
+                      prefix="supplier"
+                      conf={conf}
+                      ev={ev}
+                      setField={setField}
+                    />
                   </div>
-
-                  <div className="text-xs font-semibold uppercase text-muted">Customer</div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Name" value={rec.name ?? ""} onChange={(v) => setField("recipient.name", v)} score={conf("recipient.name")} evidence={ev("recipient.name")} />
-                    <Field label="TRN" value={rec.trn ?? ""} onChange={(v) => setField("recipient.trn", v)} score={conf("recipient.trn")} evidence={ev("recipient.trn")} />
-                  </div>
-                  <Field label="Customer address" value={rec.address ?? ""} onChange={(v) => setField("recipient.address", v)} score={conf("recipient.address")} evidence={ev("recipient.address")} />
 
                   <div className="text-xs font-semibold uppercase text-muted">Totals</div>
                   <div className="grid grid-cols-3 gap-3">

@@ -52,6 +52,10 @@ export interface ReviewResult {
   validations: ValidationCheck[];
   requires_verification: boolean;
   recomputed_vat?: string | null;
+  conclusion?: "pass" | "fail" | "review";
+  conclusion_reason?: string;
+  place_of_supply?: string | null;
+  detected_treatment?: string | null;
   summary: string;
 }
 
@@ -165,6 +169,9 @@ export interface PartyDetails {
   trn?: string | null;
   phone?: string | null;
   email?: string | null;
+  country?: string | null;
+  is_uae?: boolean | null;
+  vat_registration_status?: string | null;
 }
 
 export interface PaymentInfo {
@@ -191,6 +198,7 @@ export interface ExtractedInvoice {
   invoice_type?: string | null;
   invoice_number?: string | null;
   invoice_date?: string | null;
+  invoice_date_original?: string | null;
   supply_date?: string | null;
   due_date?: string | null;
   supplier?: PartyDetails;
