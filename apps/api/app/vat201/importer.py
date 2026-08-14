@@ -102,6 +102,31 @@ def parse_date(v) -> date | None:
     return None
 
 
+# Normalise transaction-type values (incl. the FTA FAF codes "01 Invoice",
+# "02 Credit Note", "03 Debit Note") to clean labels for the drill-down.
+_DOC_TYPE_MAP: list[tuple[tuple[str, ...], str]] = [
+    (("creditnote", "creditmemo", "salesreturn", "salesreturns"), "Credit Note"),
+    (("debitnote",), "Debit Note"),
+    (("taxinvoice", "invoice"), "Invoice"),
+    (("receipt",), "Receipt"),
+    (("advancepayment", "advance"), "Advance Payment"),
+    (("retention",), "Retention"),
+    (("bill",), "Bill"),
+    (("expense",), "Expense"),
+    (("payment",), "Payment"),
+]
+
+
+def _normalize_doc_type(raw) -> str | None:
+    if raw in (None, ""):
+        return None
+    n = _norm(str(raw))
+    for keys, label in _DOC_TYPE_MAP:
+        if any(k in n for k in keys):
+            return label
+    return str(raw).strip() or None
+
+
 def _map_columns(headers: list[str]) -> dict[str, str]:
     norm = {h: _norm(h) for h in headers}
     used: set[str] = set()
@@ -294,7 +319,7 @@ def parse_transactions(
                 continue
             rate = _rate(cell(row, "vat_rate"))
             vat = _to_decimal(cell(row, "vat_amount"))
-            doc_type = str(cell(row, "doc_type") or "") or None
+            doc_type = _normalize_doc_type(cell(row, "doc_type"))
             direction = _infer_direction(doc_type, str(cell(row, "direction") or "") or None) or sheet_dir
             treatment = (
                 _infer_treatment(str(cell(row, "treatment") or "") or None, rate, vat, doc_type)
