@@ -125,6 +125,29 @@ def test_domestic_uae_missing_number_and_date_is_review():
     assert "Invoice Number" in r.conclusion_reason or "Invoice Date" in r.conclusion_reason
 
 
+def test_columnar_layout_labels_then_values():
+    # Scanned layout where all field LABELS are in one block and their VALUES in another
+    # (with a product table between) — as produced by multi-column OCR. Fields must still
+    # be paired correctly (this reproduces the ALMUKDAD/Oleochem 5-page invoice).
+    text = "\n".join([
+        "ALMUKDAD LUBRICANTS & GREASE TRADING",
+        "Tax Invoice", "TRN: 105424163100003",
+        "Invoice Date:", "Invoice No.:", "Client Name:", "Address:",
+        "Place of Loading", "HS Code",
+        "504000004026", "235000034026", "59900000405",   # product-code table
+        "05/08/2026", "M-006-SYR",
+        "Oleochem For Lubricant Oils & Petrochemicals Abou Ghoufa",
+        "Syria, Rif Dimashq, Eastern Al-Kiswah",
+        "Total 118944.10", "VAT 0%",
+    ])
+    inv = parse_invoice(text)
+    assert inv.invoice_number == "M-006-SYR"
+    assert "Oleochem" in (inv.recipient.name or "")
+    assert inv.recipient.is_uae is False          # Syria -> outside UAE
+    r = review_invoice(inv, text)
+    assert "recipient.trn" not in {v.field for v in r.verification_items}
+
+
 def test_zero_rated_invoice_accepted_not_flagged():
     # A clearly 0% invoice must be read as VAT=0 (not a spurious line-item triple) and
     # the "VAT rate consistency" check must PASS.

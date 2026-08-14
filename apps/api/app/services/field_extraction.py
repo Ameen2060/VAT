@@ -600,6 +600,118 @@ def extract_dates(text: str) -> dict[str, object]:
     return out
 
 
+# ── columnar layout recovery ─────────────────────────────────────────────────
+# Some scanned invoices OCR into two blocks: all the field LABELS first, then all the
+# VALUES together (often with a product table in between). The label-adjacent parsers
+# then miss everything. This recovers those fields by pairing the labels to the value
+# block positionally, validated by type so intervening noise lines are skipped.
+_COL_LABELS: list[tuple[str, str]] = [
+    ("invoicedate", "date"), ("taxinvoicedate", "date"),
+    ("invoiceno", "ref"), ("invoicenumber", "ref"), ("taxinvoiceno", "ref"), ("billno", "ref"),
+    ("clientname", "name"), ("customername", "name"), ("customer", "name"),
+    ("client", "name"), ("billto", "name"), ("soldto", "name"),
+]
+
+
+def _value_of_type(s: str, typ: str) -> str | None:
+    s = s.strip(" :.-")
+    if not s:
+        return None
+    if typ == "date":
+        m = _DATE_RE.search(_ARABIC_RE.sub(" ", s))
+        return m.group(1) if m else None
+    if typ == "ref":
+        toks = _num_tokens(s)
+        for t in toks:
+            if re.search(r"[A-Za-z]", t) and re.search(r"\d", t):  # letters + digits
+                return t
+        return None
+    if typ == "name":
+        clean = _ARABIC_RE.sub(" ", s).strip()
+        letters = sum(ch.isalpha() for ch in clean)
+        # A name: mostly letters, at least two words or a company suffix, not a pure code.
+        if letters >= 4 and (" " in clean or _COMPANY_SUFFIX.search(clean)) and not clean[:1].isdigit():
+            return _clean_party_name(clean)
+        return None
+    return None
+
+
+def _is_supplier_fragment(name: str | None, supplier: str | None) -> bool:
+    """True if `name` looks like a mid-word fragment of the supplier's name — e.g.
+    "ADING L.L.C" cut out of "…TRADING L.L.C"."""
+    if not name or not supplier:
+        return False
+    words = re.sub(r"[^a-z ]", " ", name.lower()).split()
+    if not words:
+        return False
+    first = words[0]
+    if len(first) < 4:
+        return False
+    sup = supplier.lower()
+    idx = sup.find(first)
+    return idx > 0 and sup[idx - 1].isalpha()   # found, but preceded by a letter (mid-word)
+
+
+def _columnar_extract(text: str) -> dict:
+    """Recover invoice_number / invoice_date / customer name+address for two-block
+    (labels-then-values) OCR layouts. Returns only what it can pair confidently."""
+    lines = [ln.strip() for ln in text.splitlines()]
+    labels: list[tuple[int, str]] = []  # (line_index, type)
+    for i, ln in enumerate(lines):
+        head = _norm_label(ln.split(":")[0]) if ":" in ln else _norm_label(ln)
+        val = ln.split(":", 1)[1].strip() if ":" in ln else ""
+        for key, typ in _COL_LABELS:
+            if head == key or head.startswith(key):
+                if not _value_of_type(val, typ):     # only unpaired labels (value elsewhere)
+                    labels.append((i, typ))
+                break
+    if len(labels) < 2:
+        return {}
+
+    # Multi-page documents repeat the labels; keep only the FIRST contiguous group so we
+    # pair against the value block on the same page.
+    first_line = labels[0][0]
+    labels = [lab for lab in labels if lab[0] - first_line <= 15]
+
+    # Value block: non-empty, non-label lines after the last label. Skip pure-number
+    # rows (product codes / row numbers) but KEEP dates (also all-digits/slashes).
+    start = labels[-1][0] + 1
+    values: list[str] = []
+    for ln in lines[start:start + 60]:
+        if not ln or ":" in ln:
+            continue
+        if re.fullmatch(r"[\d\s.,/-]+", ln) and not _DATE_RE.search(ln):
+            continue
+        values.append(ln)
+
+    # Positional, type-matched pairing with a NON-consuming cursor: for each label find
+    # the next value (from the cursor) matching its type; a label with no match doesn't
+    # consume the values meant for later labels.
+    out: dict = {}
+    cursor = 0
+    field_for = {"date": "invoice_date", "ref": "invoice_number", "name": "recipient_name"}
+    for _, typ in labels:
+        j = cursor
+        while j < len(values):
+            got = _value_of_type(values[j], typ)
+            if got:
+                key = field_for.get(typ)
+                if key and key not in out:
+                    out[key] = got
+                    if typ == "name":
+                        addr = []
+                        for a in values[j + 1: j + 3]:
+                            if _value_of_type(a, "ref") or _value_of_type(a, "date"):
+                                break
+                            addr.append(a)
+                        if addr:
+                            out["recipient_address"] = ", ".join(addr)
+                cursor = j + 1
+                break
+            j += 1
+    return out
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 def parse_invoice(text: str) -> Invoice:
     inv = Invoice()
@@ -634,6 +746,19 @@ def parse_invoice(text: str) -> Invoice:
     if dates["supply"]:
         inv.supply_date = str(dates["supply"])
         set_conf("supply_date", 0.8)
+
+    # Columnar-layout recovery: some scans OCR all labels first, then all values (with a
+    # product table between). Pair them positionally to recover fields the adjacent
+    # parsers missed. `col` is reused for the customer name/address below.
+    col = _columnar_extract(text)
+    if not inv.invoice_number and col.get("invoice_number"):
+        inv.invoice_number = col["invoice_number"]
+        set_conf("invoice_number", 0.7)
+    if not inv.invoice_date and col.get("invoice_date"):
+        _iso, _orig = normalize_date(col["invoice_date"])
+        inv.invoice_date = _iso or _orig
+        inv.invoice_date_original = _orig
+        set_conf("invoice_date", 0.65)
 
     # TRNs — labelled first, else positional (first = supplier, second = recipient).
     supplier = PartyDetails()
@@ -681,6 +806,15 @@ def parse_invoice(text: str) -> Invoice:
     if cust_name:
         recipient.name = cust_name
         set_conf("recipient.name", 0.8)
+    # Columnar override: prefer the positionally-paired customer when the adjacent parse
+    # missed it or returned a mid-word fragment of the supplier (e.g. "ADING" ← "TRADING").
+    col_name = col.get("recipient_name")
+    if col_name and (not recipient.name or _is_supplier_fragment(recipient.name, supplier.name)):
+        recipient.name = _clean_party_name(col_name)
+        set_conf("recipient.name", 0.75)
+        if col.get("recipient_address"):
+            recipient.address = col["recipient_address"]
+            set_conf("recipient.address", 0.65)
 
     # Recipient address — prefer a customer-specific label, else the address block that
     # sits next to the customer's name; never silently borrow the supplier's address.
