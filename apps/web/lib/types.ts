@@ -14,6 +14,7 @@ export interface ReviewSummary {
   status: ReviewStatus;
   read: boolean;
   summary: string;
+  duplicate?: boolean;
 }
 
 export interface Finding {

@@ -36,7 +36,11 @@ def init_db() -> None:
             "regime": "VARCHAR(8) DEFAULT 'vat'",
         },
     )
-    ensure_columns("documents", {"regime": "VARCHAR(8) DEFAULT 'vat'"})
+    ensure_columns("documents", {
+        "regime": "VARCHAR(8) DEFAULT 'vat'",
+        "folder_path": "VARCHAR(1024)",
+        "content_hash": "VARCHAR(64)",
+    })
     ensure_columns("vat201_returns", {"refund311_json": "TEXT"})
     ensure_columns("archive_files", {"deleted_at": "TIMESTAMP", "deleted_by": "VARCHAR(255)"})
     ensure_columns("vat_rule_versions", {"requires_validation": "BOOLEAN DEFAULT FALSE"})

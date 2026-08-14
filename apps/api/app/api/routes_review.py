@@ -52,6 +52,7 @@ class ReviewSummary(BaseModel):
     status: str
     read: bool
     summary: str
+    duplicate: bool = False
 
 
 class StatusUpdate(BaseModel):
@@ -86,15 +87,26 @@ def _summary(r: Review, filename: str) -> ReviewSummary:
 async def upload_document(
     file: UploadFile = File(...),
     category: str = Form("invoice"),
+    folder_path: str | None = Form(None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[ReviewSummary]:
+    import hashlib
+
+    from ..models import Document
+
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
+    # Duplicate detection (spec §7): same content already uploaded?
+    content_hash = hashlib.sha256(data).hexdigest()
+    dup = db.execute(
+        select(Document.id).where(Document.content_hash == content_hash)
+    ).first()
     try:
         reviews = process_upload(
-            db, filename=file.filename or "upload", data=data, mime=file.content_type, category=category
+            db, filename=file.filename or "upload", data=data, mime=file.content_type,
+            category=category, folder_path=folder_path,
         )
     except UnsupportedFileError as e:
         raise HTTPException(status_code=415, detail=str(e)) from e
@@ -107,7 +119,11 @@ async def upload_document(
         review_id=reviews[0].id, document_id=reviews[0].document_id,
         uploaded_by=getattr(user, "email", None),
     )
-    return [_summary(r, file.filename or "upload") for r in reviews]
+    out = [_summary(r, file.filename or "upload") for r in reviews]
+    if dup:
+        for s in out:
+            s.duplicate = True
+    return out
 
 
 @router.get("/reviews", response_model=list[ReviewSummary])

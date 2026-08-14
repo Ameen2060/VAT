@@ -203,10 +203,11 @@ export const api = {
     return json(await afetch(`${API_BASE}/api/reviews/${id}`, { cache: "no-store" }));
   },
 
-  async upload(file: File, category = "invoice"): Promise<ReviewSummary[]> {
+  async upload(file: File, category = "invoice", folderPath?: string): Promise<ReviewSummary[]> {
     const fd = new FormData();
     fd.append("file", file);
     fd.append("category", category);
+    if (folderPath) fd.append("folder_path", folderPath);
     return json(await afetch(`${API_BASE}/api/documents/upload`, { method: "POST", body: fd }));
   },
 

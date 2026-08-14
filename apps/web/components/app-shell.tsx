@@ -12,6 +12,7 @@ import { InstallButton } from "./pwa";
 const NAV = [
   { href: "/", label: "Dashboard", icon: "grid" },
   { href: "/analyze", label: "Document Analysis", icon: "scan" },
+  { href: "/batch", label: "Folder Analysis", icon: "folder" },
   { href: "/assistant", label: "VAT Assistant", icon: "chat" },
   { href: "/vat-return", label: "VAT Return", icon: "receipt" },
   { href: "/fta-updates", label: "FTA Updates", icon: "bell" },

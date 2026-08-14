@@ -115,6 +115,10 @@ class Document(Base):
     size_bytes: Mapped[int] = mapped_column(Integer, default=0)
     storage_key: Mapped[str] = mapped_column(String(1024))
     category: Mapped[str] = mapped_column(String(64), default="invoice")
+    # Original folder/subfolder path when uploaded as part of a folder (spec §8).
+    folder_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # SHA-256 of the file content, for duplicate detection across uploads (spec §7).
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     # Which tax regime this document is reviewed under (vat | ct). Discriminator that
     # lets a single repository hold both VAT and Corporate Tax documents.
     regime: Mapped[str] = mapped_column(String(8), default=Regime.VAT.value, index=True)

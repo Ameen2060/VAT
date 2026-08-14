@@ -23,11 +23,15 @@ def process_upload(
     data: bytes,
     mime: str | None = None,
     category: str = "invoice",
+    folder_path: str | None = None,
 ) -> list[Review]:
     """Run the full pipeline for one uploaded file and persist the result(s)."""
+    import hashlib
+
     storage = get_storage()
     provider = get_ai_provider()
 
+    content_hash = hashlib.sha256(data).hexdigest()
     key = storage.save(filename, data)
     document = Document(
         filename=filename,
@@ -35,6 +39,8 @@ def process_upload(
         size_bytes=len(data),
         storage_key=key,
         category=category,
+        folder_path=folder_path,
+        content_hash=content_hash,
     )
     db.add(document)
     db.flush()  # assign document.id
