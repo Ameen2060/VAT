@@ -984,7 +984,8 @@ def parse_invoice(text: str) -> Invoice:
 
 
 def missing_fields(inv: Invoice) -> list[str]:
-    """List important fields that were not confidently extracted."""
+    """List important fields that were not confidently extracted. A UAE TRN is NOT
+    required for a party established outside the UAE, so its absence is never 'missing'."""
     checks = {
         "invoice_number": inv.invoice_number,
         "invoice_date": inv.invoice_date,
@@ -997,4 +998,8 @@ def missing_fields(inv: Invoice) -> list[str]:
         "total_gross": inv.total_gross,
         "currency": inv.currency,
     }
+    if inv.supplier.is_uae is False:
+        checks.pop("supplier.trn", None)      # overseas vendor — UAE TRN not applicable
+    if inv.recipient.is_uae is False:
+        checks.pop("recipient.trn", None)     # overseas customer — UAE TRN not applicable
     return [k for k, v in checks.items() if v in (None, "")]
