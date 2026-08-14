@@ -168,6 +168,26 @@ export interface AiStatus {
   message: string;
 }
 
+export interface VatCode {
+  code: string;
+  name: string;
+  rate?: string | null;
+  treatment?: string | null;
+  tax_type: string;
+  reverse_charge: boolean;
+  zero_rated: boolean;
+  exempt: boolean;
+  out_of_scope: boolean;
+  adjustment: boolean;
+  vat_return_box?: string | null;
+  effective_from?: string | null;
+  effective_to?: string | null;
+  regulatory_ref?: string | null;
+  description?: string | null;
+  active: boolean;
+  updated_by?: string | null;
+}
+
 export interface PartyDetails {
   name?: string | null;
   address?: string | null;

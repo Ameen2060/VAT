@@ -25,6 +25,33 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class VatTaxCode(Base):
+    """Configurable UAE VAT tax-code master (admin-editable). Seeded from the built-in
+    catalogue (app/vat/tax_codes.py) on first boot; the resolver reads rate/flags from
+    here so treatments can be maintained without code changes. Effective-dated."""
+
+    __tablename__ = "vat_tax_codes"
+
+    code: Mapped[str] = mapped_column(String(16), primary_key=True)   # SR, ZR, EX, ...
+    name: Mapped[str] = mapped_column(String(120))
+    rate: Mapped[str | None] = mapped_column(String(16), nullable=True)  # "0.05" / "0" / None
+    treatment: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    tax_type: Mapped[str] = mapped_column(String(16), default="both")   # sales|purchase|both
+    reverse_charge: Mapped[bool] = mapped_column(default=False)
+    zero_rated: Mapped[bool] = mapped_column(default=False)
+    exempt: Mapped[bool] = mapped_column(default=False)
+    out_of_scope: Mapped[bool] = mapped_column(default=False)
+    adjustment: Mapped[bool] = mapped_column(default=False)
+    vat_return_box: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    effective_from: Mapped[str | None] = mapped_column(String(10), nullable=True)  # ISO date
+    effective_to: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    regulatory_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(default=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
 class StoredBlob(Base):
     """Binary object storage backed by the database, used when no external object
     store (Vercel Blob / S3) is configured. Keeps uploaded documents and generated

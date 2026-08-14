@@ -17,6 +17,7 @@ import type {
   ReviewStatus,
   ReviewSummary,
   SearchHit,
+  VatCode,
 } from "./types";
 
 // Default to same-origin relative URLs ("") — Next proxies /api to the backend
@@ -140,6 +141,21 @@ export const api = {
 
   async listUsers(): Promise<AuthUser[]> {
     return json(await afetch(`${API_BASE}/api/auth/users`, { cache: "no-store" }));
+  },
+
+  // ── VAT tax-code master (configurable) ───────────────────────────────────
+  async listVatCodes(): Promise<VatCode[]> {
+    return json(await afetch(`${API_BASE}/api/vat-codes`, { cache: "no-store" }));
+  },
+
+  async updateVatCode(code: string, patch: Partial<VatCode>): Promise<VatCode> {
+    return json(
+      await afetch(`${API_BASE}/api/vat-codes/${encodeURIComponent(code)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      }),
+    );
   },
 
   async adminResetPassword(userId: string): Promise<{ user_email: string; reset_url: string; expires_minutes: number }> {

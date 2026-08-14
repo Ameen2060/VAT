@@ -18,6 +18,7 @@ const NAV = [
   { href: "/knowledge", label: "Knowledge Base", icon: "book" },
   { href: "/repository", label: "Repository", icon: "folder" },
   { href: "/archive", label: "Archive", icon: "archive" },
+  { href: "/vat-codes", label: "VAT Master", icon: "receipt", adminOnly: true },
   { href: "/users", label: "User Management", icon: "users", adminOnly: true },
 ];
 

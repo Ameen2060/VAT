@@ -348,7 +348,7 @@ def _status_and_risk(findings: Iterable[Finding]) -> tuple[ComplianceStatus, Ris
     return ComplianceStatus.PASS, RiskLevel.LOW
 
 
-def review_invoice(inv: Invoice, raw_text: str = "") -> ReviewResult:
+def review_invoice(inv: Invoice, raw_text: str = "", tax_master: dict | None = None) -> ReviewResult:
     """Pipeline steps 4–7: validate the extracted data, flag anything needing manual
     verification, then run the deterministic compliance rules and derive the verdict.
 
@@ -370,7 +370,7 @@ def review_invoice(inv: Invoice, raw_text: str = "") -> ReviewResult:
 
     # Step 5b: resolve the VAT tax code from the whole context (never the rate alone),
     # using the invoice date for effective-date logic, and recompute expected VAT.
-    tax = resolve_tax_code(inv, inv.transaction_type)
+    tax = resolve_tax_code(inv, inv.transaction_type, master=tax_master)
 
     # Step 6: deterministic compliance rules (only assess data that is present).
     findings: list[Finding] = []

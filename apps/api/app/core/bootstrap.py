@@ -43,6 +43,7 @@ def init_db() -> None:
 
     from ..auth.service import bootstrap_admin
     from ..fta.seed import seed_fta
+    from ..vat.tax_codes import seed_tax_codes
 
     settings = get_settings()
     with SessionLocal() as db:
@@ -50,6 +51,10 @@ def init_db() -> None:
         # Seeding is best-effort — it must never block startup.
         try:
             seed_fta(db)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            seed_tax_codes(db)  # populate the configurable VAT tax-code master
         except Exception:  # noqa: BLE001
             pass
 

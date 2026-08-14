@@ -124,7 +124,16 @@ def _parse_iso(d: str | None) -> date | None:
         return None
 
 
-def resolve_tax_code(inv: Invoice, txn: TransactionType | None = None) -> TaxCodeResult:
+def resolve_tax_code(inv: Invoice, txn: TransactionType | None = None,
+                     master: dict | None = None) -> TaxCodeResult:
+    """Resolve the VAT tax code, then apply the admin-configured master (rate/name)."""
+    res = _resolve_core(inv, txn)
+    if master:
+        return _mk(res.code, res.certain, res.reason, inv, master)
+    return res
+
+
+def _resolve_core(inv: Invoice, txn: TransactionType | None = None) -> TaxCodeResult:
     """Pick a VAT tax code from the full context (parties, direction, document type,
     wording) — NOT from the rate alone. `certain=False` means REVIEW."""
     as_of = _parse_iso(inv.invoice_date)
@@ -191,17 +200,67 @@ def _detected_rate(inv: Invoice) -> Decimal | None:
     return None
 
 
-def _mk(code: str, certain: bool, reason: str, inv: Invoice) -> TaxCodeResult:
+def _mk(code: str, certain: bool, reason: str, inv: Invoice, master: dict | None = None) -> TaxCodeResult:
     d = _BY_CODE[code]
+    # Prefer the admin-configured master row (rate/name) when supplied.
+    row = (master or {}).get(code) or {}
+    rate = row.get("rate", d.rate)
+    name = row.get("name", d.name)
     taxable = inv.total_net
     stated = inv.total_vat
     expected = None
     diff = None
-    if d.rate is not None and taxable is not None:
-        expected = _round(taxable * d.rate)
+    if rate is not None and taxable is not None:
+        expected = _round(taxable * rate)
         if stated is not None:
             diff = _round(stated - expected)
     return TaxCodeResult(
-        code=code, name=d.name, rate=d.rate, certain=certain, reason=reason,
+        code=code, name=name, rate=rate, certain=certain, reason=reason,
         taxable_amount=taxable, stated_vat=stated, expected_vat=expected, difference=diff,
     )
+
+
+# ── configurable master (database) ───────────────────────────────────────────
+def seed_tax_codes(db) -> int:
+    """Seed the admin-editable VatTaxCode master from this built-in catalogue. Only
+    inserts codes that don't already exist, so admin edits are never overwritten."""
+    from ..models import VatTaxCode
+
+    existing = {c for (c,) in db.query(VatTaxCode.code).all()} if hasattr(db, "query") else set()
+    added = 0
+    for t in TAX_CODES:
+        if t.code in existing:
+            continue
+        db.add(VatTaxCode(
+            code=t.code, name=t.name, rate=(str(t.rate) if t.rate is not None else None),
+            treatment=(t.treatment.value if t.treatment else None), tax_type=t.tax_type,
+            reverse_charge=t.reverse_charge, zero_rated=t.zero_rated, exempt=t.exempt,
+            out_of_scope=t.out_of_scope, adjustment=t.adjustment, vat_return_box=t.vat_return_box,
+            effective_from=t.effective_from.isoformat(),
+            effective_to=(t.effective_to.isoformat() if t.effective_to else None),
+            regulatory_ref=t.regulatory_ref, description=t.description, active=t.active,
+        ))
+        added += 1
+    if added:
+        db.commit()
+    return added
+
+
+def load_master(db) -> dict:
+    """Load the configurable master into {code: {rate: Decimal|None, name: str}} for the
+    resolver. Falls back silently to the built-in catalogue on any error."""
+    out: dict = {}
+    try:
+        from ..models import VatTaxCode
+
+        for row in db.query(VatTaxCode).all():
+            rate = None
+            if row.rate not in (None, "", "N/A"):
+                try:
+                    rate = Decimal(str(row.rate))
+                except Exception:  # noqa: BLE001
+                    rate = None
+            out[row.code] = {"rate": rate, "name": row.name, "active": row.active}
+    except Exception:  # noqa: BLE001
+        return {}
+    return out

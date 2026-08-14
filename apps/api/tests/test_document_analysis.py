@@ -160,6 +160,22 @@ def test_credit_note_tax_code():
     assert r.code == "CN"
 
 
+def test_vat_code_master_api_list_and_update():
+    from fastapi.testclient import TestClient
+    from app.main import app
+    with TestClient(app) as client:
+        rows = client.get("/api/vat-codes").json()
+        codes = {r["code"] for r in rows}
+        assert {"SR", "ZR", "EX", "OOS", "RC", "GCC"} <= codes
+        # Admin update (auth is pass-through admin in tests).
+        r = client.put("/api/vat-codes/ZR", json={"vat_return_box": "Box 2 (custom)"})
+        assert r.status_code == 200, r.text
+        assert r.json()["vat_return_box"] == "Box 2 (custom)"
+        # persisted
+        again = {x["code"]: x for x in client.get("/api/vat-codes").json()}
+        assert again["ZR"]["vat_return_box"] == "Box 2 (custom)"
+
+
 def test_effective_date_filters_active_codes():
     from datetime import date
     from app.vat.tax_codes import active_codes

@@ -10,6 +10,7 @@ from ..ai.factory import get_ai_provider
 from ..models import Document, Review
 from ..vat.rules import review_invoice
 from ..vat.schemas import Invoice
+from ..vat.tax_codes import load_master
 from . import report as report_svc
 from .extraction import extract_invoices
 from .storage import get_storage
@@ -38,10 +39,11 @@ def process_upload(
     db.add(document)
     db.flush()  # assign document.id
 
+    tax_master = load_master(db)
     reviews: list[Review] = []
     for doc in extract_invoices(filename, data, mime):
         invoice = doc.invoice
-        result = review_invoice(invoice, doc.raw_text or "")
+        result = review_invoice(invoice, doc.raw_text or "", tax_master=tax_master)
         advisory = provider.advise(invoice, result, doc.raw_text)
 
         review = Review(
@@ -74,7 +76,7 @@ def reanalyze_advisory(db: Session, review: Review) -> Review:
     without re-uploading."""
     provider = get_ai_provider()
     invoice = Invoice.model_validate(review.invoice_json or {})
-    result = review_invoice(invoice, review.raw_text or "")
+    result = review_invoice(invoice, review.raw_text or "", tax_master=load_master(db))
     advisory = provider.advise(invoice, result, review.raw_text)
     review.advisory_json = advisory.model_dump(mode="json")
     db.commit()
@@ -194,7 +196,7 @@ def rereview(db: Session, review: Review, invoice_patch: dict) -> Review:
     are updated (version history is added in a later phase)."""
     merged = {**(review.invoice_json or {}), **invoice_patch}
     invoice = Invoice.model_validate(merged)
-    result = review_invoice(invoice, review.raw_text or "")
+    result = review_invoice(invoice, review.raw_text or "", tax_master=load_master(db))
 
     review.invoice_json = invoice.model_dump(mode="json")
     review.result_json = result.model_dump(mode="json")

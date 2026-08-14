@@ -24,6 +24,7 @@ from .api.routes_fta import router as fta_router
 from .api.routes_knowledge import router as knowledge_router
 from .api.routes_review import router as review_router
 from .api.routes_vat201 import router as vat201_router
+from .api.routes_vat_codes import router as vat_codes_router
 from .auth.deps import get_current_user
 from .core.config import get_settings
 from .vat.rules import review_invoice
@@ -100,6 +101,7 @@ app.include_router(vat201_router, dependencies=_auth)
 app.include_router(ct_router, dependencies=_auth)
 app.include_router(archive_router, dependencies=_auth)
 app.include_router(fta_router, dependencies=_auth)
+app.include_router(vat_codes_router, dependencies=_auth)
 
 
 @app.get("/health", tags=["system"])
