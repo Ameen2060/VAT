@@ -169,11 +169,26 @@ def _sheet_defaults(sheet_name: str) -> tuple[Direction | None, Treatment | None
 
 
 def _sheets_from_bytes(filename: str, data: bytes) -> list[tuple[str, list[dict]]]:
-    """Return [(sheet_name, rows)]. Excel yields every sheet; CSV yields one."""
-    if filename.lower().endswith(".xlsx"):
+    """Return [(sheet_name, rows)]. Excel yields every sheet; CSV yields one.
+
+    Format is detected from the CONTENT, not just the extension, so a file that is
+    named .xlsx but is really a CSV (a common export) still parses, and an unsupported
+    old .xls (OLE2) gives a clear message instead of an uncaught error.
+    """
+    is_ooxml = data[:2] == b"PK"                       # real .xlsx/.xlsm (zip container)
+    is_ole = data[:4] == b"\xd0\xcf\x11\xe0"            # legacy .xls (OLE2 compound file)
+    wants_excel = filename.lower().endswith((".xlsx", ".xlsm"))
+
+    if (wants_excel or is_ooxml) and is_ooxml:
         from openpyxl import load_workbook
 
-        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        try:
+            wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(
+                "The Excel file could not be read. Re-save it as .xlsx (Excel Workbook) "
+                "or export it as .csv and upload again."
+            ) from exc
         out: list[tuple[str, list[dict]]] = []
         for ws in wb.worksheets:
             rows = list(ws.iter_rows(values_only=True))
@@ -182,6 +197,14 @@ def _sheets_from_bytes(filename: str, data: bytes) -> list[tuple[str, list[dict]
             headers = [str(c) if c is not None else f"col{i}" for i, c in enumerate(rows[0])]
             out.append((ws.title, [dict(zip(headers, r)) for r in rows[1:]]))
         return out
+
+    if is_ole or filename.lower().endswith(".xls"):
+        raise ValueError(
+            "The old .xls format is not supported. Open the file in Excel and save it as "
+            ".xlsx (Excel Workbook) or .csv, then upload again."
+        )
+
+    # Everything else (real .csv, or a .xlsx that is actually CSV text) → parse as CSV.
     text = data.decode("utf-8-sig", errors="replace")
     return [("", list(csv.DictReader(io.StringIO(text))))]
 

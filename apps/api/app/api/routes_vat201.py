@@ -60,14 +60,26 @@ async def generate(
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
-    if not (file.filename or "").lower().endswith((".csv", ".xlsx")):
+    if not (file.filename or "").lower().endswith((".csv", ".xlsx", ".xlsm", ".xls")):
         raise HTTPException(status_code=415, detail="Upload a .csv or .xlsx transactions file")
-    rec = generate_return(
-        db, filename=file.filename or "transactions.csv", data=data,
-        company_name=company_name, company_trn=company_trn,
-        period_type=period_type, year=year, index=index,
-        filter_by_date=filter_by_date, default_emirate=default_emirate,
-    )
+    try:
+        rec = generate_return(
+            db, filename=file.filename or "transactions.csv", data=data,
+            company_name=company_name, company_trn=company_trn,
+            period_type=period_type, year=year, index=index,
+            filter_by_date=filter_by_date, default_emirate=default_emirate,
+        )
+    except ValueError as exc:
+        # Bad/unsupported file content — a clear 400, never a 500.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — any parsing failure is the file's fault
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Could not process the transactions file. Please upload a valid .csv or "
+                ".xlsx with a header row (Date, Type, Amount, VAT, …)."
+            ),
+        ) from exc
     # Archive the source transactions file, linked to the generated return.
     archive_svc.archive_file(
         db, filename=file.filename or "transactions.csv", data=data,

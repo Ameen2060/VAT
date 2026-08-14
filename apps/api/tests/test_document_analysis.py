@@ -271,3 +271,15 @@ def test_import_from_overseas_supplier_flags_reverse_charge_review():
     r = review_invoice(inv, text)
     assert r.transaction_type.value == "import"
     assert r.conclusion == Conclusion.REVIEW
+
+
+def test_vat201_importer_handles_mislabelled_files():
+    # A .xlsx that is actually CSV content must not crash (BadZipFile) — it parses as CSV.
+    from app.vat201.importer import _sheets_from_bytes
+    csv_bytes = b"Date,Type,Taxable Amount,VAT Amount\n2026-07-15,sales,1000,50\n"
+    sheets = _sheets_from_bytes("transactions.xlsx", csv_bytes)
+    assert len(sheets[0][1]) == 1
+    # A legacy .xls (OLE2 header) gives a clear message, not a 500.
+    import pytest
+    with pytest.raises(ValueError):
+        _sheets_from_bytes("old.xls", b"\xd0\xcf\x11\xe0rubbish")
