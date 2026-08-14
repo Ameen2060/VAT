@@ -125,6 +125,40 @@ def test_domestic_uae_missing_number_and_date_is_review():
     assert "Invoice Number" in r.conclusion_reason or "Invoice Date" in r.conclusion_reason
 
 
+def test_zero_rated_invoice_accepted_not_flagged():
+    # A clearly 0% invoice must be read as VAT=0 (not a spurious line-item triple) and
+    # the "VAT rate consistency" check must PASS.
+    text = "\n".join([
+        "SUPPLIER LLC", "Dubai, UAE", "Tax Invoice",
+        "TRN: 100123456700003",
+        "Invoice No: INV-Z1", "Invoice Date: 01/07/2026",
+        "Sr Item Qty UnitPrice Amount",
+        "1 Goods 10 343.63 373.95",   # a line's columns that happen to sum with 30.32
+        "Total 118944.10", "VAT 0% 0.00", "Grand Total 118944.10",
+    ])
+    inv = parse_invoice(text)
+    assert inv.total_vat == 0
+    r = review_invoice(inv, text)
+    rate_check = next(c for c in r.validations if c.name == "VAT rate consistency")
+    assert rate_check.passed is True
+
+
+def test_overseas_party_trn_not_flagged_as_missing():
+    from app.services.field_extraction import parse_invoice as _pi
+    text = "\n".join([
+        "UAE SUPPLIER LLC", "Dubai, UAE", "Tax Invoice",
+        "TRN: 100123456700003",
+        "Invoice No: INV-9", "Invoice Date: 01/07/2026",
+        "Bill To: ABC Ltd", "Address: London, United Kingdom",
+        "Total 1000 VAT 0 Grand 1000",
+    ])
+    inv = _pi(text)
+    assert inv.recipient.is_uae is False
+    r = review_invoice(inv, text)
+    gaps = {v.field for v in r.verification_items}
+    assert "recipient.trn" not in gaps   # overseas customer TRN is not required
+
+
 def test_tax_code_master_has_all_treatments():
     from app.vat.tax_codes import TAX_CODES
     codes = {t.code for t in TAX_CODES}

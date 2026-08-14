@@ -722,6 +722,17 @@ def parse_invoice(text: str) -> Invoice:
     # VAT rate / treatment
     vat_rate = _detect_vat_rate(text)
 
+    # Explicit zero-rated / 0% VAT is a valid 0% taxable supply — VAT is 0. Detect it
+    # so a spurious net+vat=gross triple (e.g. a line's unit-price columns) can't invent
+    # a non-zero VAT on a document that clearly states 0%.
+    zero_rated = vat_rate is not None and vat_rate == 0
+    if not zero_rated:
+        zero_rated = bool(
+            re.search(r"\bVAT\b[^%\n]{0,10}\b0(?:\.0+)?\s*%|\b0(?:\.0+)?\s*%\s*VAT|zero[\s-]?rated", text, re.I)
+        )
+    if zero_rated:
+        inv.has_zero_rated_statement = True
+
     # ── Amounts: net / vat / gross via cross-checked relationships ─────────────
     # Two complementary signals, so it works whether or not the printed gross is
     # clean and regardless of how the columns are labelled:
@@ -737,7 +748,14 @@ def parse_invoice(text: str) -> Invoice:
                 if 0 < vat_c < net_c and _rate_consistent(net_c, vat_c, vat_rate):
                     candidates.append((net_c, vat_c, net_c + vat_c))
 
-    if candidates:
+    if zero_rated and amounts:
+        # 0% supply: the grand total is the largest money amount; net = gross, VAT = 0.
+        total = max(amounts)
+        inv.total_net, inv.total_vat, inv.total_gross = total, Decimal("0"), total
+        inv.treatment = VatTreatment.ZERO_RATED
+        for _f in ("total_net", "total_vat", "total_gross"):
+            set_conf(_f, 0.7)
+    elif candidates:
         if vat_rate is None:
             big = max(candidates, key=lambda x: x[2])
             vat_rate = (big[1] / big[0]) if big[0] else Decimal("0")

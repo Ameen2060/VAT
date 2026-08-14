@@ -91,6 +91,12 @@ def build_verification_items(inv: Invoice, raw_text: str) -> list[VerificationIt
     conf = inv.field_confidence or {}
     items: list[VerificationItem] = []
     for field, label in _FIELDS:
+        # A UAE TRN is NOT required for a party established outside the UAE — never flag
+        # its absence as a gap (it is "Not applicable", handled by the party assessment).
+        if field == "supplier.trn" and inv.supplier.is_uae is False:
+            continue
+        if field == "recipient.trn" and inv.recipient.is_uae is False:
+            continue
         value = _get(inv, field)
         has_score = field in conf
         score = float(conf.get(field, 0.0) or 0.0)
@@ -141,11 +147,20 @@ def build_validations(inv: Invoice) -> list[ValidationCheck]:
         ))
 
     if net is not None and vat is not None and net > 0:
+        from .schemas import VatTreatment
+
         implied = (vat / net) if net else Decimal(0)
         near5 = abs(implied - Decimal(str(C.STANDARD_RATE))) <= Decimal("0.005")
+        # 0% is a valid rate: zero-rated / exempt / out-of-scope supplies carry no VAT.
+        zero_rated = vat == 0 or implied <= Decimal("0.005") or inv.treatment in (
+            VatTreatment.ZERO_RATED, VatTreatment.EXEMPT, VatTreatment.OUT_OF_SCOPE,
+        )
+        detail = (
+            "0% — zero-rated / no VAT (accepted)" if zero_rated and not near5
+            else f"Implied VAT rate ≈ {round(float(implied) * 100, 2)}% of net"
+        )
         checks.append(ValidationCheck(
-            name="VAT rate consistency", passed=near5 or vat == 0,
-            detail=f"Implied VAT rate ≈ {round(float(implied) * 100, 2)}% of net",
+            name="VAT rate consistency", passed=near5 or zero_rated, detail=detail,
         ))
 
     if inv.supplier and inv.supplier.trn:
