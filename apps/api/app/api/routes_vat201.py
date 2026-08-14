@@ -60,8 +60,8 @@ async def generate(
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="Empty file")
-    if not (file.filename or "").lower().endswith((".csv", ".xlsx", ".xlsm", ".xls")):
-        raise HTTPException(status_code=415, detail="Upload a .csv or .xlsx transactions file")
+    # Accept any file type / extension — the importer detects the real format from the
+    # content (Excel workbook vs. CSV/text) and returns a clear message if it can't read it.
     try:
         rec = generate_return(
             db, filename=file.filename or "transactions.csv", data=data,

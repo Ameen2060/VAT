@@ -119,10 +119,11 @@ export default function VatReturnPage() {
       <Card className="p-5">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="block sm:col-span-2">
-            <span className="text-xs uppercase text-muted">Transactions file (.csv / .xlsx)</span>
+            <span className="text-xs uppercase text-muted">
+              Transactions file (any type — Excel, CSV, TXT; format auto-detected)
+            </span>
             <input
               type="file"
-              accept=".csv,.xlsx"
               onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               className="mt-1 w-full rounded-lg border border-border bg-bg px-3 py-1.5 text-sm"
             />
