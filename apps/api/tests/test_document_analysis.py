@@ -302,3 +302,15 @@ def test_vat201_scientific_trn_and_credit_note():
     assert all(t.trn == "100047000000000" for t in txns)          # TRN not corrupted
     cn = [t for t in txns if "credit" in (t.doc_type or "").lower()][0]
     assert cn.taxable_amount < 0 and cn.vat_amount < 0             # credit note reduces the box
+
+
+def test_vat201_importer_utf16_and_tsv():
+    # Excel "Unicode Text" and some ERP exports are UTF-16 (full of NUL bytes) or
+    # tab-separated — these must parse, not be rejected as binary.
+    from app.vat201.importer import parse_transactions
+    csv = "Date,Transaction Type,Party,Emirate,Taxable Amount,VAT Amount\n2025-05-10,01 Invoice,ABC,Dubai,1000,50\n"
+    assert 0 in csv.encode("utf-16")                       # sanity: UTF-16 has NUL bytes
+    assert len(parse_transactions("d.csv", csv.encode("utf-16"))[0]) == 1
+    assert len(parse_transactions("d.csv", csv.encode("utf-16-le"))[0]) == 1
+    tsv = csv.replace(",", "\t")
+    assert len(parse_transactions("d.txt", tsv.encode("utf-8"))[0]) == 1

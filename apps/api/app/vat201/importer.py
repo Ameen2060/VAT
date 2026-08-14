@@ -251,20 +251,39 @@ def _sheets_from_bytes(filename: str, data: bytes) -> list[tuple[str, list[dict]
             ".xlsx (Excel Workbook) or .csv, then upload again."
         )
 
-    # Everything else (real .csv, or a .xlsx that is actually CSV text) → parse as CSV.
-    if b"\x00" in data[:4096]:  # NUL bytes ⇒ binary, not text/CSV
+    # Everything else (real .csv, a .xlsx that is actually CSV, or a Unicode/UTF-16 text
+    # export from Excel/an accounting system) → parse as delimited text. Detect the
+    # encoding (UTF-16 legitimately contains NUL bytes) and the delimiter.
+    text = _decode_text(data)
+    sample = text[:8192]
+    delimiter = "\t" if sample.count("\t") >= max(1, sample.count(",")) else \
+        (";" if sample.count(";") > sample.count(",") else ",")
+    rows = list(csv.DictReader(io.StringIO(text), delimiter=delimiter))
+    if not rows and not text.strip():
         raise ValueError(
-            "This file isn't a readable CSV or Excel workbook. Open it in Excel and use "
-            "File → Save As → Excel Workbook (.xlsx) or CSV (.csv), then upload again."
+            "This file is empty or unreadable. Upload a .csv or .xlsx with a header row "
+            "(Date, Type, Taxable Amount, VAT Amount, …)."
         )
-    text = data.decode("utf-8-sig", errors="replace")
-    # A high ratio of replacement characters also means it wasn't really text.
-    if text and text.count("�") > max(20, len(text) // 20):
-        raise ValueError(
-            "This file isn't a readable CSV or Excel workbook. Re-save it as .xlsx or .csv "
-            "and upload again."
-        )
-    return [("", list(csv.DictReader(io.StringIO(text))))]
+    return [("", rows)]
+
+
+def _decode_text(data: bytes) -> str:
+    """Decode file bytes to text, handling the encodings Excel/ERP systems export:
+    UTF-16 (with or without BOM — legitimately full of NUL bytes), UTF-8 (+BOM),
+    Windows-1252 and Latin-1. Never fails."""
+    if data[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return data.decode("utf-16", errors="replace")
+    if data[:3] == b"\xef\xbb\xbf":
+        return data.decode("utf-8-sig", errors="replace")
+    # No BOM but many NUL bytes ⇒ UTF-16 text (e.g. Excel "Unicode Text").
+    if data[:4096].count(0) > len(data[:4096]) // 8:
+        return data.decode("utf-16", errors="replace")
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("latin-1", errors="replace")
 
 
 def parse_emirate(value) -> Emirate | None:
