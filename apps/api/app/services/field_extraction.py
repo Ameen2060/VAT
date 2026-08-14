@@ -983,6 +983,30 @@ def parse_invoice(text: str) -> Invoice:
     return inv
 
 
+def labeled_amounts(text: str) -> tuple["Decimal | None", "Decimal | None", "Decimal | None"]:
+    """Extract the PRINTED, explicitly-labelled net / VAT / total amounts (single value
+    each). Used to check the invoice's own arithmetic against the document, independent
+    of the amount solver (which recomputes a self-consistent total). Returns None for any
+    figure that isn't cleanly labelled, so the reconciliation check only runs when all
+    three are unambiguous."""
+    labels = _labels(text)
+
+    def amt(*keys: str) -> "Decimal | None":
+        v = _first_label(labels, *keys)
+        if not v:
+            return None
+        nums = _amounts(v)
+        return nums[0] if nums else None
+
+    net = amt("net", "subtotal", "netamount", "taxableamount", "amountbeforevat",
+              "totalexcludingvat", "totalexvat", "netttotal")
+    vat = amt("vat", "vatamount", "taxamount", "vat5", "vat5amount", "output vat".replace(" ", ""),
+              "vataed", "totalvat")
+    total = amt("total", "grandtotal", "totalamount", "amountpayable", "invoicetotal",
+                "totalinclusivevat", "totalincludingvat", "nettotal")
+    return net, vat, total
+
+
 def missing_fields(inv: Invoice) -> list[str]:
     """List important fields that were not confidently extracted. A UAE TRN is NOT
     required for a party established outside the UAE, so its absence is never 'missing'."""

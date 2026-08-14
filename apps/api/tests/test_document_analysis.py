@@ -125,6 +125,23 @@ def test_domestic_uae_missing_number_and_date_is_review():
     assert "Invoice Number" in r.conclusion_reason or "Invoice Date" in r.conclusion_reason
 
 
+def test_pass_fail_review_conclusions():
+    from app.vat.schemas import Conclusion
+    # PASS: clean UAE->UAE 5% invoice with valid TRNs and correct arithmetic.
+    ok = "\n".join([
+        "ABC TRADING LLC", "Dubai, UAE", "Tax Invoice", "TRN: 100123456700003",
+        "Invoice No: INV-100", "Invoice Date: 01/07/2026",
+        "Bill To: XYZ SERVICES LLC", "Customer TRN: 100999888700003", "Address: Abu Dhabi, UAE",
+        "Net: 1000.00", "VAT: 50.00", "Total: 1050.00",
+    ])
+    assert review_invoice(parse_invoice(ok), ok).conclusion == Conclusion.PASS
+    # FAIL: printed net + VAT does not equal the printed total.
+    bad = ok.replace("Total: 1050.00", "Total: 1100.00")
+    r = review_invoice(parse_invoice(bad), bad)
+    assert r.conclusion == Conclusion.FAIL
+    assert any(f.rule_id == "CALC-004" for f in r.findings)
+
+
 def test_columnar_layout_labels_then_values():
     # Scanned layout where all field LABELS are in one block and their VALUES in another
     # (with a product table between) — as produced by multi-column OCR. Fields must still

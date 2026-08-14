@@ -377,6 +377,12 @@ def review_invoice(inv: Invoice, raw_text: str = "", tax_master: dict | None = N
     for rule in ALL_RULES:
         findings.extend(rule(inv))
 
+    # Step 6b: check the invoice's OWN printed arithmetic (net + VAT = total), using the
+    # values as labelled on the document — independent of the amount solver, which
+    # recomputes a self-consistent total. Fires only when all three are clearly printed,
+    # so it flags a genuine error (→ FAIL) without false positives on messy scans.
+    findings.extend(_printed_totals_check(raw_text))
+
     # Step 7: verdict — from compliance findings alone.
     status, risk = _status_and_risk(findings)
     highs = sum(1 for f in findings if f.severity == Severity.HIGH)
@@ -421,6 +427,32 @@ def review_invoice(inv: Invoice, raw_text: str = "", tax_master: dict | None = N
         vat_difference=tax.difference,
         summary=summary,
     )
+
+
+def _printed_totals_check(raw_text: str) -> list[Finding]:
+    """A HIGH finding when the document's OWN printed net + VAT ≠ printed total."""
+    if not raw_text:
+        return []
+    from ..services.field_extraction import labeled_amounts
+
+    net, vat, total = labeled_amounts(raw_text)
+    if net is None or vat is None or total is None:
+        return []
+    tol = Decimal(str(C.CALC_TOLERANCE_AED))
+    if abs((net + vat) - total) > tol:
+        return [Finding(
+            rule_id="CALC-004",
+            severity=Severity.HIGH,
+            title="Printed totals do not reconcile (net + VAT ≠ total)",
+            detail=(
+                f"The document prints net {net} + VAT {vat} = {net + vat}, but the stated "
+                f"total is {total}. The invoice arithmetic is incorrect."
+            ),
+            legal_ref=C.LEGAL_REFS["full_invoice_particulars"],
+            affects=Party.SUPPLIER,
+            recommendation="Correct the invoice so net + VAT equals the total shown.",
+        )]
+    return []
 
 
 # Mandatory fields for an invoice-type document (section 8 of the spec).
