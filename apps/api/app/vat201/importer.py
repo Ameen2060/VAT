@@ -246,10 +246,30 @@ def _sheets_from_bytes(filename: str, data: bytes) -> list[tuple[str, list[dict]
         return out
 
     if is_ole or filename.lower().endswith(".xls"):
-        raise ValueError(
-            "The old .xls format is not supported. Open the file in Excel and save it as "
-            ".xlsx (Excel Workbook) or .csv, then upload again."
-        )
+        # Legacy .xls (BIFF/OLE2): read with xlrd.
+        try:
+            import xlrd
+
+            book = xlrd.open_workbook(file_contents=data)
+        except Exception as exc:  # noqa: BLE001
+            raise ValueError(
+                "This .xls file could not be read. Open it in Excel and save it as "
+                ".xlsx (Excel Workbook) or .csv, then upload again."
+            ) from exc
+        out2: list[tuple[str, list[dict]]] = []
+        for sh in book.sheets():
+            if sh.nrows == 0:
+                continue
+            headers = [
+                str(sh.cell_value(0, c)) if sh.cell_value(0, c) not in (None, "") else f"col{c}"
+                for c in range(sh.ncols)
+            ]
+            rows = [
+                {headers[c]: sh.cell_value(r, c) for c in range(sh.ncols)}
+                for r in range(1, sh.nrows)
+            ]
+            out2.append((sh.name, rows))
+        return out2
 
     # Everything else (real .csv, a .xlsx that is actually CSV, or a Unicode/UTF-16 text
     # export from Excel/an accounting system) → parse as delimited text. Detect the
