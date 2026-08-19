@@ -26,6 +26,8 @@ export default function RepositoryPage() {
     api.listReviews().then(setReviews).catch((e) => setError(String(e.message ?? e)));
   }, []);
 
+  const [deleting, setDeleting] = useState<string | null>(null);
+
   const filtered = useMemo(
     () =>
       reviews.filter(
@@ -37,6 +39,19 @@ export default function RepositoryPage() {
       ),
     [reviews, risk, status, compliance, q],
   );
+
+  const remove = async (id: string, filename: string) => {
+    if (!window.confirm(`Delete "${filename}" from the repository? This cannot be undone.`)) return;
+    setDeleting(id);
+    try {
+      await api.deleteReview(id);
+      setReviews((prev) => prev.filter((r) => r.review_id !== id));
+    } catch (e) {
+      setError(String((e as Error).message ?? e));
+    } finally {
+      setDeleting(null);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-in">
@@ -124,10 +139,10 @@ export default function RepositoryPage() {
         ) : (
           <ul className="divide-y divide-border">
             {filtered.map((r) => (
-              <li key={r.review_id}>
+              <li key={r.review_id} className="flex items-center gap-2 pr-3 hover:bg-elevated">
                 <Link
                   href={`/review?id=${r.review_id}`}
-                  className="flex items-center justify-between px-5 py-3 hover:bg-elevated"
+                  className="flex min-w-0 flex-1 items-center justify-between px-5 py-3"
                 >
                   <div className="min-w-0">
                     <div className="truncate font-medium">{r.filename}</div>
@@ -141,6 +156,22 @@ export default function RepositoryPage() {
                     <StatusBadge status={r.compliance_status} />
                   </div>
                 </Link>
+                <button
+                  onClick={() => remove(r.review_id, r.filename)}
+                  disabled={deleting === r.review_id}
+                  aria-label={`Delete ${r.filename}`}
+                  title="Delete document"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border text-muted hover:border-danger/50 hover:text-danger disabled:opacity-40"
+                >
+                  {deleting === r.review_id ? (
+                    <span className="text-xs">…</span>
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"
+                      strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+                      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" />
+                    </svg>
+                  )}
+                </button>
               </li>
             ))}
           </ul>
